@@ -1,3 +1,4 @@
+from genericpath import isfile
 import time
 import os
 import subprocess
@@ -95,7 +96,15 @@ def read_mycards(image):
     s1 = match_symbol(image, REGION_MYCARD1_SUIT, TEMPLATES_MYCARD1_SUITS)
     s2 = match_symbol(image, REGION_MYCARD2_SUIT, TEMPLATES_MYCARD2_SUITS)
 
-    return v1+s1+v2+s2
+    c1, c2 = v1+s1, v2+s2
+    if c1 in DECK and c2 in DECK:
+        return c1+c2
+
+    filepath = '/home/seb/screencaps-failcards/%d.png' % time.time()
+    image.save(filepath)
+
+    print('Failed to read mycards %s %s -> %s' % (c1, c2, filepath))
+    return '??'
 
 def read_board(image):
     v1 = match_symbol(image, REGION_BOARD1_VALUE, TEMPLATES_BOARD_VALUE)
@@ -122,31 +131,24 @@ def read_board(image):
 def chunk(s, bs):
   return [s[i:i + bs] for i in range(0, len(s), bs)]
 
-def pp_cards(cards, pfx=''):
-    print('%s%s' % (pfx, ' '.join(chunk(cards, 2))))
-
-XY_FOLD = (1000, 1000)
-XY_CALL = (1500, 1000)
-XY_ANY = (2000, 1000)
-
-def tap(xy):
-    # time.sleep(random.uniform(0.8, 1.2)) #2.2))
-    x, y = [str(n) for n in xy]
-    subprocess.check_output(['adb', 'shell', 'input', 'tap', x, y])
+def pp_cards(cards, fmt='@@'):
+    s = ' '.join(chunk(cards, 2))
+    s = fmt.replace('@@', s) 
+    print(s)
 
 SBAR_Y = 930
 SBAR_X = [
-    1990,
-    2035,
+    1860,
+    1900,
+    1960,
+    2000,
+    2040,
     2080,
     2120
 ]
 
-def can_check(image):
-    return image.getpixel((1447, 1010)) == (255, 255, 255, 255)
-
 def how_strong(image):
-    strength = 0
+    strength = 1
     for x in SBAR_X:
         pixel = image.getpixel((x, SBAR_Y))
         # print(x, '->', pixel)
@@ -155,50 +157,207 @@ def how_strong(image):
             continue
     return strength
 
-def act(image):
-    if image.getpixel((1915, 1010)) == (255, 255, 255, 255): # BET or RAISE available
-        return
+XY_FOLD = (1000, 1000) # FOLD
+XY_CALL = (1500, 1000) # CHECK, CALL
+XY_BET = (2000, 1000) # BET, RAISE, ALL IN
+XY_POT = (1700, 700) # POT bet
+XY_PLUS = (1900, 700) # POT bet
 
-    h = how_strong(image)
-    print('%d/4' % h)
-    if h > 0:
-        tap(XY_ANY)
-    elif can_check(image):
-        tap(XY_CALL)
-    else:
-        tap(XY_FOLD)
+def tap(xy):
+    # fake_sleep(3)
+    x, y = [str(n) for n in xy]
+    _ = subprocess.check_output(['adb', 'shell', 'input', 'tap', x, y])
+    time.sleep(.5) # 
+
+def do_allin():
+    tap(XY_BET)
+
+def do_check():
+    tap(XY_CALL)
+
+def do_call():
+    tap(XY_CALL)
+
+def do_fold():
+    tap(XY_FOLD)
+
+def do_bet(size=0):
+    tap(XY_BET)
+    if size == 'POT':
+        tap(XY_POT)
+    elif size > 0:
+        for _ in range(size // BIG_BLIND):
+            tap(XY_PLUS)
+
+    tap(XY_BET)
+
+def do_raise(size):
+    do_bet(size)
+
+def fake_sleep(max_secs=3):
+    time.sleep(random.uniform(0.8, max_secs))
+
+def can_act(image):
+    # one of three buttons already clicked
+    if image.getpixel((1325, 1010))[0] > 200 or \
+        image.getpixel((1755, 1010))[0] > 200 or \
+        image.getpixel((895, 1010))[0] > 200:
+        return False
+
+    # third button is BET, RAISE or ALL-IN
+    if can_bet(image) or can_raise(image):
+        # debug
+        save_image(image)
+        return True
+
+    return False
+
+def can_bet(image):
+    return image.getpixel((1910, 1010)) == (255, 255, 255, 255)
+
+def can_raise(image): # only matches RAISE or ALL-IN (but not CALL ANY)
+    return image.getpixel((1943, 1030)) == (255, 255, 255, 255)
+
+def can_allin(image): # only matches ALL-IN (but not BET or RAISE)
+    return image.getpixel((1955, 1015)) == (255, 255, 255, 255)
+
+def can_check(image):
+    return image.getpixel((1445, 1010)) == (255, 255, 255, 255)
+
+# def can_call(image):
+#     return not can_check(image) or can_allin(image)
+
+def save_image(image):
+    filepath = '/home/seb/screencaps-auto/%d.png' % time.time()
+    if os.path.isfile(filepath):
+        return
+    image.save(filepath)
+
+BIG_BLIND = 10000
 
 def poll_table():
-    prev_cards = ''
-    prev_board = ''
 
     while True:
         out = subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'])
         image = Image.open(io.BytesIO(out))
-        board = read_board(image)
-        
-        if prev_board != board:
-            image.save('/home/seb/screencaps-auto/%d.png' % time.time())
-            pp_cards(board, '')
-            prev_board = board
 
-            act(image)
+        if not can_act(image):
             continue
-
+        
         cards = read_mycards(image)
         if '??' in cards:
              continue
+
+        score = how_strong(image)
+        pp_cards(cards, '-> @@  %d/7' % score)
+
+        board = read_board(image)
+        if board:
+            pp_cards(board)
+
+        if score > 4:
+            if can_allin(image):
+                if score in (6, 7):
+                    do_allin()
+                else:
+                    do_fold()
+            else:
+                if score == 5:
+                    do_bet('POT')
+                elif score == 6:
+                    do_bet(BIG_BLIND * 5)
+                elif score == 7:
+                    do_bet(BIG_BLIND * 10)
+
+        else:
+            if can_check(image):
+                do_check()
+            elif can_allin(image):
+                amount = read_mystack(image)
+                if amount <= BIG_BLIND * score:
+                    print('All in', amount)
+                    do_allin()
+                else:
+                    do_fold()
+            else: # CALL or RAISE
+                amount = read_call(image)
+                if amount <= BIG_BLIND * score-1:
+                    print('Called', amount)
+                    do_call()
+                else:
+                    do_fold()
+
+        time.sleep(1) # 
+
+
+REGION_MYSTACK_VALUE = (760, 915, 910, 945)
+REGION_POT_VALUE = (1015, 590, 1150, 625)
+
+from tesserocr import PyTessBaseAPI, PSM, OEM, image_to_text
+
+def read_number(image, region):
+    image = image.crop(region)
+    image = image.convert('L')
+
+    s = image_to_text(image, psm=7).rstrip() # PSM.SINGLE_BLOCK 6 PSM.SINGLE_LINE 7 PSM.SINGLE_WORD 8 PSM.SINGLE_CHAR 10
+
+    # debug
+    image.save('/tmp/value.png')
+    print(s)
+
+    if ' ' in s:
+        _, s = s.split(' ')
+    s = s.replace(',', '')
+    
+    if s.endswith('K'):
+        s = s[:-1] + '000'
+    elif s.endswith('M'):
+        s = s[:-1] + '000000'
+    return int(s)
+
+def read_mystack(image):
+    return read_number(image, REGION_MYSTACK_VALUE)
+
+def read_pot(image):
+    return read_number(image, REGION_POT_VALUE)
+
+def read_call(image):
+    first = 0
+    last = 0
+    for x in range(1350, 1700):
+        pixel = image.getpixel((x, 990))
+        if pixel == (255, 255, 255, 255):
+            if not first:
+                first = x
+            last = x
+
+    return read_number(image, (first-5, 975, last+5, 1045)) # REGION_CALL_VALUE
+
+
+def test_call():
+    d = '/home/seb/calls'
+    for i, f in enumerate(sorted(os.listdir(d))):
+        image_path = os.path.join(d, f)
+        image = Image.open(image_path)
+
+        read_call(image)
+
+def blah():
+    d = '/home/seb/actions'
+    # xy = (1885, 1010) # button 3
+    # xy = (1905, 1010) # button 3
+    xy = (1445, 1010) # button 2
+    for i, f in enumerate(sorted(os.listdir(d))):
+        image_path = os.path.join(d, f)
+        image = Image.open(image_path)
+        pixel = image.getpixel(xy)
+        print(pixel, image_path)
+        # print('can_act:', can_act(image))
+        print('can_bet:', can_bet(image))
+        print('can_raise:', can_raise(image))
+        print('can_allin:', can_allin(image))
+        # print('can_check:', can_check(image))
         
-        if '?' in cards:
-            image.save('/home/seb/screencaps-nocards/%d.png' % time.time())
-            continue 
-
-        if prev_cards != cards:
-            pp_cards(cards, '=> ')
-            prev_cards = cards
-
-            act(image)
-            continue
 
 if __name__ == '__main__':
     poll_table()
