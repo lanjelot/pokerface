@@ -11,52 +11,52 @@ CARD_VALUES = "23456789TJQKA"
 CARD_SUITS = "shdc"
 DECK = [x + y for x in CARD_VALUES for y in CARD_SUITS]
 
-TEMPLATES_MYCARD1 = {}
+TEMPLATES_MYCARD1_VALUE = {}
 for v in CARD_VALUES:
-    tv = cv2.imread('/home/seb/cv/mycard1/%s.png' % v, 0)
-    TEMPLATES_MYCARD1[v] = tv
+    tv = cv2.imread('./cv/mycard1/%s.png' % v, 0)
+    TEMPLATES_MYCARD1_VALUE[v] = tv
 
 TEMPLATES_MYCARD1_SUITS = {}
 for v in CARD_SUITS:
-    tv = cv2.imread('/home/seb/cv/mycard1/%s.png' % v, 0)
+    tv = cv2.imread('./cv/mycard1/%s.png' % v, 0)
     TEMPLATES_MYCARD1_SUITS[v] = tv
 
-TEMPLATES_MYCARD2 = {}
+TEMPLATES_MYCARD2_VALUE = {}
 for v in CARD_VALUES:
-    tv = cv2.imread('/home/seb/cv/mycard2/%s.png' % v, 0)
-    TEMPLATES_MYCARD2[v] = tv
+    tv = cv2.imread('./cv/mycard2/%s.png' % v, 0)
+    TEMPLATES_MYCARD2_VALUE[v] = tv
 
 TEMPLATES_MYCARD2_SUITS = {}
 for v in CARD_SUITS:
-    tv = cv2.imread('/home/seb/cv/mycard2/%s.png' % v, 0)
+    tv = cv2.imread('./cv/mycard2/%s.png' % v, 0)
     TEMPLATES_MYCARD2_SUITS[v] = tv
 
-TEMPLATES_VALUES = {}
+TEMPLATES_BOARD_VALUE = {}
 for v in CARD_VALUES:
-    tv = cv2.imread('/home/seb/cv/%s.png' % v, 0)
-    TEMPLATES_VALUES[v] = tv
+    tv = cv2.imread('./cv/board/%s.png' % v, 0)
+    TEMPLATES_BOARD_VALUE[v] = tv
 
-TEMPLATES_SUITS = {}
+TEMPLATES_BOARD_SUIT = {}
 for v in CARD_SUITS:
-    tv = cv2.imread('/home/seb/cv/%s.png' % v, 0)
-    TEMPLATES_SUITS[v] = tv
+    tv = cv2.imread('./cv/board/%s.png' % v, 0)
+    TEMPLATES_BOARD_SUIT[v] = tv
 
-MYCARD1_VALUE_REGION = (1100, 760, 1165, 860)
-MYCARD2_VALUE_REGION = (1230, 745, 1290, 845)
-MYCARD1_SUIT_REGION = (1115, 865, 1175, 945)
-MYCARD2_SUIT_REGION = (1230, 855, 1290, 935)
+REGION_MYCARD1_VALUE = (1100, 760, 1165, 860)
+REGION_MYCARD2_VALUE = (1230, 745, 1290, 845)
+REGION_MYCARD1_SUIT = (1115, 865, 1175, 945)
+REGION_MYCARD2_SUIT = (1230, 855, 1290, 935)
 
-BOARD1_VALUE_REGION = (805, 400, 850, 470)
-BOARD2_VALUE_REGION = (925, 400, 970, 470)
-BOARD3_VALUE_REGION = (1050, 400, 1095, 470)
-BOARD4_VALUE_REGION = (1175, 400, 1210, 470)
-BOARD5_VALUE_REGION = (1295, 400, 1330, 470)
+REGION_BOARD1_VALUE = (805, 400, 850, 470)
+REGION_BOARD2_VALUE = (925, 400, 970, 470)
+REGION_BOARD3_VALUE = (1050, 400, 1095, 470)
+REGION_BOARD4_VALUE = (1175, 400, 1210, 470)
+REGION_BOARD5_VALUE = (1295, 400, 1330, 470)
 
-BOARD1_SUIT_REGION = (805, 470, 850, 520)
-BOARD2_SUIT_REGION = (925, 470, 970, 520)
-BOARD3_SUIT_REGION = (1050, 470, 1095, 520)
-BOARD4_SUIT_REGION = (1175, 470, 1210, 520)
-BOARD5_SUIT_REGION = (1295, 470, 1330, 520)
+REGION_BOARD1_SUIT = (805, 470, 850, 520)
+REGION_BOARD2_SUIT = (925, 470, 970, 520)
+REGION_BOARD3_SUIT = (1050, 470, 1095, 520)
+REGION_BOARD4_SUIT = (1175, 470, 1210, 520)
+REGION_BOARD5_SUIT = (1295, 470, 1330, 520)
 
 
 def test_screencaps(d='/home/seb/screencaps-board-bak/'):
@@ -89,37 +89,35 @@ def match_symbol(image, region, templates):
     return best_match
 
 def read_mycards(image):    
-    v1 = match_symbol(image, MYCARD1_VALUE_REGION, TEMPLATES_MYCARD1)
-    v2 = match_symbol(image, MYCARD2_VALUE_REGION, TEMPLATES_MYCARD2)
+    v1 = match_symbol(image, REGION_MYCARD1_VALUE, TEMPLATES_MYCARD1_VALUE)
+    v2 = match_symbol(image, REGION_MYCARD2_VALUE, TEMPLATES_MYCARD2_VALUE)
 
-    s1 = match_symbol(image, MYCARD1_SUIT_REGION, TEMPLATES_MYCARD1_SUITS)
-    s2 = match_symbol(image, MYCARD2_SUIT_REGION, TEMPLATES_MYCARD2_SUITS)
+    s1 = match_symbol(image, REGION_MYCARD1_SUIT, TEMPLATES_MYCARD1_SUITS)
+    s2 = match_symbol(image, REGION_MYCARD2_SUIT, TEMPLATES_MYCARD2_SUITS)
 
     return v1+s1+v2+s2
 
 def read_board(image):
-    v1 = match_symbol(image, BOARD1_VALUE_REGION, TEMPLATES_VALUES)
-    v2 = match_symbol(image, BOARD2_VALUE_REGION, TEMPLATES_VALUES)
-    v3 = match_symbol(image, BOARD3_VALUE_REGION, TEMPLATES_VALUES)
-    v4 = match_symbol(image, BOARD4_VALUE_REGION, TEMPLATES_VALUES)
-    v5 = match_symbol(image, BOARD5_VALUE_REGION, TEMPLATES_VALUES)
+    v1 = match_symbol(image, REGION_BOARD1_VALUE, TEMPLATES_BOARD_VALUE)
+    v2 = match_symbol(image, REGION_BOARD2_VALUE, TEMPLATES_BOARD_VALUE)
+    v3 = match_symbol(image, REGION_BOARD3_VALUE, TEMPLATES_BOARD_VALUE)
+    v4 = match_symbol(image, REGION_BOARD4_VALUE, TEMPLATES_BOARD_VALUE)
+    v5 = match_symbol(image, REGION_BOARD5_VALUE, TEMPLATES_BOARD_VALUE)
 
-    s1 = match_symbol(image, BOARD1_SUIT_REGION, TEMPLATES_SUITS)
-    s2 = match_symbol(image, BOARD2_SUIT_REGION, TEMPLATES_SUITS)
-    s3 = match_symbol(image, BOARD3_SUIT_REGION, TEMPLATES_SUITS)
-    s4 = match_symbol(image, BOARD4_SUIT_REGION, TEMPLATES_SUITS)
-    s5 = match_symbol(image, BOARD5_SUIT_REGION, TEMPLATES_SUITS)
+    s1 = match_symbol(image, REGION_BOARD1_SUIT, TEMPLATES_BOARD_SUIT)
+    s2 = match_symbol(image, REGION_BOARD2_SUIT, TEMPLATES_BOARD_SUIT)
+    s3 = match_symbol(image, REGION_BOARD3_SUIT, TEMPLATES_BOARD_SUIT)
+    s4 = match_symbol(image, REGION_BOARD4_SUIT, TEMPLATES_BOARD_SUIT)
+    s5 = match_symbol(image, REGION_BOARD5_SUIT, TEMPLATES_BOARD_SUIT)
     
     board = v1+s1, v2+s2, v3+s3, v4+s4, v5+s5
 
     b = ''
     for c in board:
-        if c in DECK:
-            b += c
-        else:
-            b += '..'
-    return b #''.join(c for c in board if c in DECK)
-
+        if c not in DECK:
+            break
+        b += c
+    return b
 
 def chunk(s, bs):
   return [s[i:i + bs] for i in range(0, len(s), bs)]
@@ -132,9 +130,43 @@ XY_CALL = (1500, 1000)
 XY_ANY = (2000, 1000)
 
 def tap(xy):
-    time.sleep(random.uniform(0.8, 2.2))
+    # time.sleep(random.uniform(0.8, 1.2)) #2.2))
     x, y = [str(n) for n in xy]
     subprocess.check_output(['adb', 'shell', 'input', 'tap', x, y])
+
+SBAR_Y = 930
+SBAR_X = [
+    1990,
+    2035,
+    2080,
+    2120
+]
+
+def can_check(image):
+    return image.getpixel((1447, 1010)) == (255, 255, 255, 255)
+
+def how_strong(image):
+    strength = 0
+    for x in SBAR_X:
+        pixel = image.getpixel((x, SBAR_Y))
+        # print(x, '->', pixel)
+        if pixel[0] > 20:
+            strength += 1
+            continue
+    return strength
+
+def act(image):
+    if image.getpixel((1915, 1010)) == (255, 255, 255, 255): # BET or RAISE available
+        return
+
+    h = how_strong(image)
+    print('%d/4' % h)
+    if h > 0:
+        tap(XY_ANY)
+    elif can_check(image):
+        tap(XY_CALL)
+    else:
+        tap(XY_FOLD)
 
 def poll_table():
     prev_cards = ''
@@ -149,6 +181,8 @@ def poll_table():
             image.save('/home/seb/screencaps-auto/%d.png' % time.time())
             pp_cards(board, '')
             prev_board = board
+
+            act(image)
             continue
 
         cards = read_mycards(image)
@@ -157,18 +191,15 @@ def poll_table():
         
         if '?' in cards:
             image.save('/home/seb/screencaps-nocards/%d.png' % time.time())
-        #     cards = register_unknown(cards, image)        
+            continue 
 
         if prev_cards != cards:
             pp_cards(cards, '=> ')
             prev_cards = cards
-            # tap(XY_FOLD)
-            continue
 
-        # tap(XY_CALL)
+            act(image)
+            continue
 
 if __name__ == '__main__':
     poll_table()
 
-#TODO
-# always click on check/fold if hand strength shit
