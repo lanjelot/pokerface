@@ -1,4 +1,3 @@
-from genericpath import isfile
 import time
 import os
 import subprocess
@@ -153,8 +152,11 @@ def read_number(img, region, fiddle=False):
 
     return None
 
+# what hero already bet
 def read_bet(image):
-    # what hero already bet
+    if image.getpixel((1070, 655))[0] < 200:
+        return None
+
     first = 0
     last = 0
     for x in range(1070, 1170):
@@ -180,7 +182,19 @@ def read_mystack(image, offset_x=-3, offset_x2=3):
     # return read_number(image, (794, 913, 922, 944)) # n.mM OK /o/ y1:912-915 y2:940-944
 
 def read_pot(image):
-    return read_number(image, (1020, 590, 1170, 627))
+    if image.getpixel((1020, 590)) != (0, 0, 0, 255):
+        return None
+
+    first = 0
+    last = 0
+    for x in range(1020, 1170):
+        for y in range(590, 627):
+            pixel = image.getpixel((x, y))
+            if pixel[0] == 255:
+                if first == 0:
+                    first = x
+                last = x
+    return read_number(image, (first, 590, last, 627))
 
 def read_call(image):
     return read_number(image, (1350, 987, 1710, 1041), True)
@@ -188,14 +202,14 @@ def read_call(image):
 def chunk(s, bs):
   return [s[i:i + bs] for i in range(0, len(s), bs)]
 
-def pp_cards(cards, board, stats):
+def pp_cards(cards, board, extra):
     s = ' '.join(re.sub('[\[\] ]', '', Card(c).pretty_string) for c in cards)
     if board:
         s = s + '  %-14s' % ' '.join(re.sub('[\[\] ]', '', Card(c).pretty_string) for c in board)
     else:
         s += ' ' * 16
-    s = s + ' - ' + stats
-    print(s)
+    s = s + ' ' + extra
+    print(s, end='', flush=True)
 
 SBAR_Y = 930
 SBAR_X = [
@@ -208,7 +222,7 @@ SBAR_X = [
     2120
 ]
 
-def how_strong(image):
+def read_strength(image):
     strength = 1
     for x in SBAR_X:
         pixel = image.getpixel((x, SBAR_Y))
@@ -220,8 +234,8 @@ def how_strong(image):
 
 from pokertude import Analyzer
 CACHE_ODDS = {}
-def analyze_odds(cards, board, villain_count):
-    key = str(cards) + str(board)
+def analyze_odds(cards, board, num_villains):
+    key = ''.join(cards) + ''.join(board) + str(num_villains)
 
     if key in CACHE_ODDS:
         return CACHE_ODDS[key]
@@ -229,11 +243,13 @@ def analyze_odds(cards, board, villain_count):
     analyzer = Analyzer()
     analyzer.set_hole_cards(cards)
     analyzer.set_board(board)
-    analyzer.set_num_opponents(villain_count)
-    
+    analyzer.set_num_opponents(num_villains)
+
+    pp_cards(cards, board, '- %d villains, ' % num_villains)
     odds = analyzer.analyze()
-    CACHE_ODDS[key] = odds
+    print('win %d%%' % odds)
     
+    CACHE_ODDS[key] = odds
     return odds
 
 # clockwise starting with left of hero
@@ -255,7 +271,7 @@ def count_villains(image):
         p1 = image.getpixel((x, y))
         p2 = image.getpixel((x+1, y))
         # print(i, x, y, '->', p1, p2)
-        if p1 - p2 > 50:
+        if p1 - p2 > 20:
             count += 1
     return count
 
@@ -288,7 +304,7 @@ def do_bet(size=0):
     if size == 'POT':
         tap(XY_POT)
     elif size > 0:
-        for _ in range(size // BIG_BLIND):
+        for _ in range(1, size // BIG_BLIND):
             tap(XY_PLUS)
 
     tap(XY_BET)
@@ -304,6 +320,14 @@ def save_image(image):
     if os.path.isfile(filepath):
         return
     image.save(filepath)
+
+def human_format(num):
+    num = float('{:.3g}'.format(num))
+    magnitude = 0
+    while abs(num) >= 1000:
+        magnitude += 1
+        num /= 1000.0
+    return '{}{}'.format('{:f}'.format(num).rstrip('0').rstrip('.'), ['', 'K', 'M', 'B', 'T'][magnitude])
 
 def can_act(image):
     # one of three buttons already clicked
@@ -347,37 +371,47 @@ def can_call(image):
 def btn2_disabled(image):
     return hash_image(image.crop((1440, 985, 1585, 1040))) == '92653fa84141bd525b8e50c94d868abd'
 
+def btns_disabled(image):
+    return hash_image(image.crop((900, 985, 2100, 1040))) == '1dda2358e9ddbba55aa5f6742bf7dc82'
+
 def can_callany(image):
     return read_button3(image) == 'callany'
 
 def can_check(image):
-    # return can_bet(image) or can_raise(image)
     return hash_image(image.crop((1440, 985, 1585, 1040))) == '5590b09a2a4c65a1e57aeb7a1d38d6b2'
 
-def poll_table():
-
+def play():
     while True:
         out = subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'])
         image = Image.open(io.BytesIO(out))
+
+        if btns_disabled(image):
+            continue
 
         cards = read_mycards(image)
         if not all(c in DECK for c in cards):
             continue
 
         board = read_board(image)
-        score = how_strong(image)
+        if len(board) not in [0, 3, 4, 5]:
+            continue
 
         num_villains = count_villains(image)
+        if not num_villains > 0:
+            continue
+
         win_odds = analyze_odds(cards, board, num_villains)
 
         if not can_act(image):
             continue
 
-        pp_cards(cards, board, '%d/8, %d villains, %2d%%' % (score, num_villains, win_odds))
-
-
         if can_check(image):
-            do_check()
+            if win_odds > 80:
+                do_bet('POT')
+            elif win_odds > 50:
+                do_bet(BIG_BLIND)
+            else:
+                do_check()
 
         else:
             if can_call(image):
@@ -385,17 +419,20 @@ def poll_table():
             else:
                 call_size = read_mystack(image)
 
-            pot_size = read_pot(image) or 0
-            if pot_size == 0:
-                bet_size = read_bet(image) or 0
-                pot_size = (bet_size + call_size) * (num_villains + 1)
+            pot_size = 0 #read_pot(image) or 0
+            bet_size = read_bet(image)
+            if bet_size:
+                pot_size += (bet_size + call_size) * (num_villains + 1) # bug miss previous bet size of whoever folded the raise
             else:
                 pot_size += (call_size * num_villains) + call_size
 
             pot_odds = 100 * call_size / pot_size
 
+            call_size = human_format(call_size)
+            pot_size = human_format(pot_size)
+
             if win_odds >= pot_odds:
-                print('Call %.2f%% >= %.2f%% (%d/%d)' % (win_odds, pot_odds, call_size/1000, pot_size/1000))
+                print('Call... %.2f%% >= %.2f%% (%s/%s)' % (win_odds, pot_odds, call_size, pot_size))
 
                 if can_call(image):
                     do_call()
@@ -403,7 +440,7 @@ def poll_table():
                     do_allin()
                     
             else:
-                print('Fold %.2f%% < %.2f%% (%d/%d)' % (win_odds, pot_odds, call_size/1000, pot_size/1000))
+                print('Fold... %.2f%% < %.2f%% (%s/%s)' % (win_odds, pot_odds, call_size, pot_size))
                 do_fold()
 
         time.sleep(1) # 
@@ -411,10 +448,10 @@ def poll_table():
 
 # TESTS TESTS TESTS
 
-EXPECTED_CALLS = [30000, 40000, 80000, 50000, 5000, 10000, 40000, 27260, 50450, 15700, 190000, 255000, 258230, 35000, 250000, 110000, 181830, 90000, 507000, 25000, 267850, 200000, 650000, 6160000, 100000, 1500000, 1000000, 200000, 600000]
-EXPECTED_MYSTACKS = [160450, 125000, 85000, 75000, 60000, 55000, 45000, 424750, 417736, 367286, 349650, 286334, 813884, 1100000, 656930, 1100000, 1000000, 157169, 4800000, 2000000, 1300000, 3700000, 2900000, 7100000, 5100000, 3900000, 1500000, 6300000, 13800000]
-EXPECTED_POTS = [50000, 40000, 160000, 40000, None, None, None, 25000, 30000, 130900, None, None, None, None, 450000, 120000, 40000, 180000, None, None, None, None, None, 750000, None, None, 5100000, None, 650000]
-EXPECTED_BETS = [None, None, None, None, 5000, None, 10000, None, None, None, 10000, 5000, 45000, 45000, None, None, None, None, 50000, 25000, 650000, None, 850000, None, 100000, 100000, None, 200000, None]
+EXPECTED_CALLS = [30000, 40000, 80000, 50000, 5000, 10000, 40000, 27260, 50450, 15700, 190000, 255000, 258230, 35000, 250000, 110000, 181830, 90000, 507000, 25000, 267850, 200000, 650000, 6160000, 100000, 1500000, 1000000, 200000, 600000, 600000, 500000]
+EXPECTED_MYSTACKS = [160450, 125000, 85000, 75000, 60000, 55000, 45000, 424750, 417736, 367286, 349650, 286334, 813884, 1100000, 656930, 1100000, 1000000, 157169, 4800000, 2000000, 1300000, 3700000, 2900000, 7100000, 5100000, 3900000, 1500000, 6300000, 13800000, 4400000, 3700000]
+EXPECTED_POTS = [50000, 40000, 160000, 40000, None, None, None, 25000, 30000, 130900, None, None, None, None, 450000, 120000, 40000, 180000, None, None, None, None, None, 750000, None, None, 5100000, None, 650000, 400000, 1700000]
+EXPECTED_BETS = [None, None, None, None, 5000, None, 10000, None, None, None, 10000, 5000, 45000, 45000, None, None, None, None, 50000, 25000, 650000, None, 850000, None, 100000, 100000, None, 200000, None, 50000, 50000]
 def test_ocr():
     dirpath = './tests/screencaps'
     for i, filename in enumerate(sorted(os.listdir(dirpath))):
@@ -443,7 +480,7 @@ def test_ocr():
             print(actual, '!=', expected)
         print('.')
 
-EXPECTED_COUNT = []
+EXPECTED_VILLAINS = [7, 7, 3, 3, 3]
 def test_count_villains():
     dirpath = './tests/count_villains'
     
@@ -451,6 +488,9 @@ def test_count_villains():
         filepath = os.path.join(dirpath, filename)
         image = Image.open(filepath)
         actual = count_villains(image)
+        expected = EXPECTED_VILLAINS[i]
+        if actual != expected:
+            print(actual, '!=', expected)
         print(filepath, actual)
 
 def blah():
@@ -483,7 +523,7 @@ def test_screencaps(d='/home/seb/screencaps-board-bak/'):
         input()
         subprocess.Popen(['killall', 'geeqie'])
 
-BIG_BLIND = 10000
+BIG_BLIND = 20000
 # ANDROID_SERIAL=
 if __name__ == '__main__':
     from sys import argv, exit
@@ -491,5 +531,5 @@ if __name__ == '__main__':
         print('usage: <big blind>')
         exit(2)
     BIG_BLIND = int(argv[1])
-    poll_table()
+    play()
 
