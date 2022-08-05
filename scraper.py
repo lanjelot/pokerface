@@ -197,7 +197,17 @@ def read_pot(image):
     return read_number(image, (first, 590, last, 627))
 
 def read_call(image):
-    return read_number(image, (1350, 987, 1710, 1041), True)
+    first = 0
+    last = 0
+    for x in range(1350, 1710):
+        for y in range(985, 1040):
+            pixel = image.getpixel((x, y))
+            if pixel[0] == 255:
+                if first == 0:
+                    first = x
+                last = x
+
+    return read_number(image, (first, 985, last, 1040), True)
 
 def chunk(s, bs):
   return [s[i:i + bs] for i in range(0, len(s), bs)]
@@ -279,7 +289,9 @@ XY_FOLD = (1000, 1000) # FOLD
 XY_CALL = (1500, 1000) # CHECK, CALL
 XY_BET = (2000, 1000) # BET, RAISE, ALL IN
 XY_POT = (1700, 700) # POT bet
+XY_HALFPOT = (1720, 830) # 1/2 POT bet
 XY_PLUS = (1900, 700) # POT bet
+XY_ALL = (2070, 35) # ALL
 
 def tap(xy):
     # fake_sleep(3)
@@ -303,6 +315,10 @@ def do_bet(size=0):
     tap(XY_BET)
     if size == 'POT':
         tap(XY_POT)
+    elif size == 'HALFPOT':
+        tap(XY_HALFPOT)
+    elif size == 'ALLIN':
+        tap(XY_ALL)
     elif size > 0:
         for _ in range(1, size // BIG_BLIND):
             tap(XY_PLUS)
@@ -380,6 +396,36 @@ def can_callany(image):
 def can_check(image):
     return hash_image(image.crop((1440, 985, 1585, 1040))) == '5590b09a2a4c65a1e57aeb7a1d38d6b2'
 
+def what_stage(board):
+    if len(board) == 0:
+        return 'preflop'
+    elif len(board) == 3:
+        return 'flop'
+    elif len(board) == 4:
+        return 'turn'
+    elif len(board) == 5:
+        return 'river'
+    return None
+
+def call_or_raise(win_odds, stage):
+    if stage in ('turn', 'river') and win_odds > 95:
+        do_allin()
+    else:
+        do_call()
+
+def bet_or_check(win_odds, stage, pot_size):
+    if stage in ('turn', 'river'):
+        if win_odds > 70:
+            do_bet('HALFPOT')
+        elif win_odds > 50:
+            do_bet(BIG_BLIND)
+
+    elif stage == 'flop':
+        if win_odds > 70:
+            do_bet(BIG_BLIND)
+
+    do_check()
+
 def play():
     while True:
         out = subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'])
@@ -393,7 +439,8 @@ def play():
             continue
 
         board = read_board(image)
-        if len(board) not in [0, 3, 4, 5]:
+        stage = what_stage(board)
+        if stage is None:
             continue
 
         num_villains = count_villains(image)
@@ -406,41 +453,52 @@ def play():
             continue
 
         if can_check(image):
-            if win_odds > 80:
-                do_bet('POT')
-            elif win_odds > 50:
-                do_bet(BIG_BLIND)
-            else:
-                do_check()
+            pot_size = read_pot(image) or 0
+            bet_or_check(win_odds, stage, pot_size)
 
         else:
-            if can_call(image):
-                call_size = read_call(image)
-            else:
+            call_ok = can_call(image)
+            if not call_ok: # hero can only go all in
                 call_size = read_mystack(image)
-
-            pot_size = 0 #read_pot(image) or 0
-            bet_size = read_bet(image)
-            if bet_size:
-                pot_size += (bet_size + call_size) * (num_villains + 1) # bug miss previous bet size of whoever folded the raise
             else:
-                pot_size += (call_size * num_villains) + call_size
+                call_size = read_call(image)
+
+            my_bet = read_bet(image)
+            if my_bet is None:
+                pot_size = (call_size * num_villains) + call_size
+            else:
+                pot_size = (my_bet + call_size) * (num_villains + 1) # bug: misses any previous bets from whoever folded after a raise
 
             pot_odds = 100 * call_size / pot_size
+
+            if call_ok:
+                if call_size >= BIG_BLIND:
+                    if stage == 'preflop':
+                        threshold = max(19, pot_odds)
+                    else:
+                        threshold = max(35, pot_odds)
+                else:
+                    threshold = pot_odds
+            else: # all in
+                if my_bet is None:
+                    threshold = max(35, pot_odds)
+                else:
+                    threshold = max(50, pot_odds)
 
             call_size = human_format(call_size)
             pot_size = human_format(pot_size)
 
-            if win_odds >= pot_odds:
-                print('Call... %.2f%% >= %.2f%% (%s/%s)' % (win_odds, pot_odds, call_size, pot_size))
+            if win_odds >= threshold:
+                print('Call... %.2f >= %.2f %s/%s %.2f' % (win_odds, threshold, call_size, pot_size, pot_odds))
 
-                if can_call(image):
-                    do_call()
+                if call_ok:
+                    call_or_raise(win_odds, stage)
+                    # do_call()
                 else:
                     do_allin()
                     
             else:
-                print('Fold... %.2f%% < %.2f%% (%s/%s)' % (win_odds, pot_odds, call_size, pot_size))
+                print('Fold... %.2f < %.2f %s/%s %.2f' % (win_odds, threshold, call_size, pot_size, pot_odds))
                 do_fold()
 
         time.sleep(1) # 
@@ -523,7 +581,7 @@ def test_screencaps(d='/home/seb/screencaps-board-bak/'):
         input()
         subprocess.Popen(['killall', 'geeqie'])
 
-BIG_BLIND = 20000
+BIG_BLIND = 600000
 # ANDROID_SERIAL=
 if __name__ == '__main__':
     from sys import argv, exit
