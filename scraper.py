@@ -1,7 +1,6 @@
 import time
 import os
 import subprocess
-import io
 import random
 import cv2
 import numpy
@@ -9,8 +8,6 @@ import re
 from tesserocr import image_to_text, PyTessBaseAPI, PSM
 from hashlib import md5
 from PIL import Image
-from texasholdem import Card
-from texasholdem.evaluator import  evaluate, rank_to_string, get_five_card_rank_percentage
 
 CARD_VALUES = "23456789TJQKA"
 CARD_SUITS = "shdc"
@@ -66,6 +63,14 @@ REGION_BOARD5_SUIT = (1295, 470, 1330, 520)
 def hash_image(image):
     return md5(image.tobytes()).hexdigest()
 
+class Timing:
+  def __enter__(self):
+    self.t1 = time.time()
+    return self
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    self.time = '%.2f' % (time.time() - self.t1)
+
 CACHE_SYMBOL = {}
 def match_symbol(image, region, templates):
     image = image.crop(region)
@@ -90,14 +95,14 @@ def match_symbol(image, region, templates):
     CACHE_SYMBOL[h] = best_match
     return best_match
 
-def read_mycards(image):    
+def read_mycards(image):
     v1 = match_symbol(image, REGION_MYCARD1_VALUE, TEMPLATES_MYCARD1_VALUE)
     v2 = match_symbol(image, REGION_MYCARD2_VALUE, TEMPLATES_MYCARD2_VALUE)
 
     s1 = match_symbol(image, REGION_MYCARD1_SUIT, TEMPLATES_MYCARD1_SUITS)
     s2 = match_symbol(image, REGION_MYCARD2_SUIT, TEMPLATES_MYCARD2_SUITS)
 
-    return v1+s1, v2+s2
+    return [v1+s1, v2+s2]
 
 def read_board(image):
     v1 = match_symbol(image, REGION_BOARD1_VALUE, TEMPLATES_BOARD_VALUE)
@@ -111,7 +116,7 @@ def read_board(image):
     s3 = match_symbol(image, REGION_BOARD3_SUIT, TEMPLATES_BOARD_SUIT)
     s4 = match_symbol(image, REGION_BOARD4_SUIT, TEMPLATES_BOARD_SUIT)
     s5 = match_symbol(image, REGION_BOARD5_SUIT, TEMPLATES_BOARD_SUIT)
-    
+
     board = v1+s1, v2+s2, v3+s3, v4+s4, v5+s5
     return [c for c in board if c in DECK]
 
@@ -152,7 +157,7 @@ def read_number(img, region, fiddle=False):
 
     return None
 
-# what hero already bet
+# what I have already bet
 def read_bet(image):
     if image.getpixel((1070, 655))[0] < 200:
         return None
@@ -178,7 +183,7 @@ def read_mystack(image, offset_x=-3, offset_x2=3):
                 if first == 0:
                     first = x
                 last = x
-    return read_number(image, (first+offset_x, 913, last+offset_x2, 944), True) 
+    return read_number(image, (first+offset_x, 913, last+offset_x2, 944), True)
     # return read_number(image, (794, 913, 922, 944)) # n.mM OK /o/ y1:912-915 y2:940-944
 
 def read_pot(image):
@@ -212,13 +217,50 @@ def read_call(image):
 def chunk(s, bs):
   return [s[i:i + bs] for i in range(0, len(s), bs)]
 
-def pp_cards(cards, board, extra):
-    s = ' '.join(re.sub('[\[\] ]', '', Card(c).pretty_string) for c in cards)
-    if board:
-        s = s + '  %-14s' % ' '.join(re.sub('[\[\] ]', '', Card(c).pretty_string) for c in board)
-    else:
-        s += ' ' * 16
-    s = s + ' ' + extra
+def fake_sleep(max_secs=3):
+    time.sleep(random.uniform(0.8, max_secs))
+
+def save_image(image):
+    # takes 1 second for .png extension, so only use for debugging or save as raw and convert later
+    filepath = '/home/seb/screencaps-auto/%d.raw' % time.time()
+    if os.path.isfile(filepath):
+        return
+    with open(filepath, 'wb') as f:
+        f.write(image.tobytes())
+    # image.save(filepath)
+
+def human_format(num):
+    num = float('{:.3g}'.format(num))
+    magnitude = 0
+    while abs(num) >= 1000:
+        magnitude += 1
+        num /= 1000.0
+    return '{}{}'.format('{:f}'.format(num).rstrip('0').rstrip('.'), ['', 'K', 'M', 'B', 'T'][magnitude])
+
+SPADE = "\u2660"
+HEART = "\u2665"
+DIAMOND = "\u2666"
+CLUB = "\u2663"
+RED = "\x1b[91m"
+MAGENTA = "\x1b[95m"
+BLUE = "\x1b[94m"
+RESET = "\x1b[0m"
+
+def cc(cards):
+    colored = []
+    for card in cards:
+        value, suit = card[0], card[1]
+        if suit == 's':
+            colored.append(value + SPADE)
+        elif suit == 'c':
+            colored.append(BLUE+ value + CLUB + RESET)
+        elif suit == 'h':
+            colored.append(RED + value + HEART + RESET)
+        elif suit == 'd':
+            colored.append(MAGENTA + value + DIAMOND + RESET)
+    return ' '.join(colored)
+
+def lprint(s):
     print(s, end='', flush=True)
 
 SBAR_Y = 930
@@ -242,27 +284,7 @@ def read_strength(image):
             continue
     return strength
 
-from pokertude import Analyzer
-CACHE_ODDS = {}
-def analyze_odds(cards, board, num_villains):
-    key = ''.join(cards) + ''.join(board) + str(num_villains)
-
-    if key in CACHE_ODDS:
-        return CACHE_ODDS[key]
-
-    analyzer = Analyzer()
-    analyzer.set_hole_cards(cards)
-    analyzer.set_board(board)
-    analyzer.set_num_opponents(num_villains)
-
-    pp_cards(cards, board, '- %d villains, ' % num_villains)
-    odds = analyzer.analyze()
-    print('win %d%%' % odds)
-    
-    CACHE_ODDS[key] = odds
-    return odds
-
-# clockwise starting with left of hero
+# clockwise starting from my left
 VILLAINS = [
     (495, 709),
     (422, 450), # evade notifications poping up left
@@ -289,12 +311,11 @@ XY_FOLD = (1000, 1000) # FOLD
 XY_CALL = (1500, 1000) # CHECK, CALL
 XY_BET = (2000, 1000) # BET, RAISE, ALL IN
 XY_POT = (1700, 700) # POT bet
-XY_HALFPOT = (1720, 830) # 1/2 POT bet
+XY_HALF = (1720, 830) # 1/2 POT bet
 XY_PLUS = (1900, 700) # POT bet
 XY_ALL = (2070, 35) # ALL
 
 def tap(xy):
-    # fake_sleep(3)
     x, y = [str(n) for n in xy]
     _ = subprocess.check_output(['adb', 'shell', 'input', 'tap', x, y])
     time.sleep(.2) #
@@ -315,9 +336,9 @@ def do_bet(size=0):
     tap(XY_BET)
     if size == 'POT':
         tap(XY_POT)
-    elif size == 'HALFPOT':
-        tap(XY_HALFPOT)
-    elif size == 'ALLIN':
+    elif size == 'HALF':
+        tap(XY_HALF)
+    elif size == 'ALL':
         tap(XY_ALL)
     elif size > 0:
         for _ in range(1, size // BIG_BLIND):
@@ -328,22 +349,15 @@ def do_bet(size=0):
 def do_raise(size):
     do_bet(size)
 
-def fake_sleep(max_secs=3):
-    time.sleep(random.uniform(0.8, max_secs))
 
-def save_image(image):
-    filepath = '/home/seb/screencaps-auto/%d.png' % time.time()
-    if os.path.isfile(filepath):
-        return
-    image.save(filepath)
+REGION_BUTTON3 = (1735, 960, 2145, 1059)
+TEMPLATES_BUTTON3 = {}
+for v in ['bet', 'raise', 'allin', 'callany']:
+    tv = cv2.imread('./cv/buttons/%s.png' % v, 0)
+    TEMPLATES_BUTTON3[v] = tv
 
-def human_format(num):
-    num = float('{:.3g}'.format(num))
-    magnitude = 0
-    while abs(num) >= 1000:
-        magnitude += 1
-        num /= 1000.0
-    return '{}{}'.format('{:f}'.format(num).rstrip('0').rstrip('.'), ['', 'K', 'M', 'B', 'T'][magnitude])
+def read_button3(image):
+    return match_symbol(image, REGION_BUTTON3, TEMPLATES_BUTTON3)
 
 def can_act(image):
     # one of three buttons already clicked
@@ -358,19 +372,10 @@ def can_act(image):
 
     # third button is BET, RAISE or ALL-IN
     if can_bet(image) or can_raise(image) or can_allin(image):
-        save_image(image) # debug
+        # save_image(image) # debug
         return True
 
     return False
-
-REGION_BUTTON3 = (1735, 960, 2145, 1059)
-TEMPLATES_BUTTON3 = {}
-for v in ['bet', 'raise', 'allin', 'callany']:
-    tv = cv2.imread('./cv/buttons/%s.png' % v, 0)
-    TEMPLATES_BUTTON3[v] = tv
-
-def read_button3(image):
-    return match_symbol(image, REGION_BUTTON3, TEMPLATES_BUTTON3)
 
 def can_bet(image):
     return read_button3(image) == 'bet'
@@ -409,38 +414,87 @@ def what_stage(board):
 
 def call_or_raise(win_odds, stage):
     if stage in ('turn', 'river') and win_odds > 95:
-        do_allin()
+        do_bet('ALL')
     else:
         do_call()
 
 def bet_or_check(win_odds, stage, pot_size):
-    if stage in ('turn', 'river'):
+    if stage == 'flop':
         if win_odds > 70:
-            do_bet('HALFPOT')
+            do_bet(BIG_BLIND)
+
+    elif stage == 'turn':
+        if win_odds > 80:
+            do_bet('HALF')
+        elif win_odds > 70:
+            do_bet(BIG_BLIND*2)
         elif win_odds > 50:
             do_bet(BIG_BLIND)
 
-    elif stage == 'flop':
-        if win_odds > 70:
+    elif stage == 'river':
+        if win_odds > 90:
+            do_bet('POT')
+        elif win_odds > 80:
+            do_bet('HALF')
+        elif win_odds > 70:
+            do_bet(BIG_BLIND*2)
+        elif win_odds > 50:
             do_bet(BIG_BLIND)
 
     do_check()
 
+from pokertude import Analyzer, parse_card, best_rank, rank_to_string
+CACHE_ODDS = {}
+def analyze_odds(cards, board, num_villains):
+    key = ''.join(cards) + ''.join(board) + str(num_villains)
+
+    if key in CACHE_ODDS:
+        return CACHE_ODDS[key]
+
+    analyzer = Analyzer()
+    analyzer.set_hole_cards(cards)
+    analyzer.set_board(board)
+    analyzer.set_num_opponents(num_villains)
+
+    s = cc(cards)
+    s += ' ' * 2
+    s += cc(board)
+    if board:
+        s += ' ' * 3*(5-len(board))
+    else:
+        s += ' ' * 14
+    lprint(f'\n{s}')
+
+    if board:
+        rank = rank_to_string(best_rank(parse_card(c) for c in cards + board))[:5]
+        lprint(f' {rank:>5}')
+    else:
+        lprint(' '*6)
+
+    lprint(f', vs {num_villains}')
+
+    odds = analyzer.analyze()
+    lprint(f', win {odds:.0f}')
+
+    CACHE_ODDS[key] = odds
+    return odds
+
 def play():
     while True:
-        out = subprocess.check_output(['adb', 'exec-out', 'screencap', '-p'])
-        image = Image.open(io.BytesIO(out))
+        out = subprocess.check_output(['adb', 'exec-out', 'screencap'], timeout=2)
+        image = Image.frombytes('RGBA', (2340, 1080), out[16:])
 
         if btns_disabled(image):
-            continue
-
-        cards = read_mycards(image)
-        if not all(c in DECK for c in cards):
+            time.sleep(.5)
             continue
 
         board = read_board(image)
         stage = what_stage(board)
         if stage is None:
+            continue
+
+        cards = read_mycards(image)
+        if not all(c in DECK for c in cards):
             continue
 
         num_villains = count_villains(image)
@@ -452,13 +506,14 @@ def play():
         if not can_act(image):
             continue
 
-        if can_check(image):
+        check_ok = can_check(image)
+        if check_ok:
             pot_size = read_pot(image) or 0
             bet_or_check(win_odds, stage, pot_size)
 
         else:
             call_ok = can_call(image)
-            if not call_ok: # hero can only go all in
+            if not call_ok: # I can only go all in
                 call_size = read_mystack(image)
             else:
                 call_size = read_call(image)
@@ -470,38 +525,59 @@ def play():
                 pot_size = (my_bet + call_size) * (num_villains + 1) # bug: misses any previous bets from whoever folded after a raise
 
             pot_odds = 100 * call_size / pot_size
-
-            if call_ok:
-                if call_size >= BIG_BLIND:
-                    if stage == 'preflop':
-                        threshold = max(19, pot_odds)
-                    else:
-                        threshold = max(35, pot_odds)
-                else:
-                    threshold = pot_odds
-            else: # all in
-                if my_bet is None:
-                    threshold = max(35, pot_odds)
-                else:
-                    threshold = max(50, pot_odds)
+            threshold = make_threshold(
+                call_ok, stage, my_bet, call_size, pot_odds)
 
             call_size = human_format(call_size)
             pot_size = human_format(pot_size)
 
             if win_odds >= threshold:
-                print('Call... %.2f >= %.2f %s/%s %.2f' % (win_odds, threshold, call_size, pot_size, pot_odds))
+                lprint(f', Call {call_size}/{pot_size} {pot_odds:.0f}%, {win_odds} > {threshold:.0f}')
 
                 if call_ok:
                     call_or_raise(win_odds, stage)
-                    # do_call()
                 else:
                     do_allin()
-                    
+
             else:
-                print('Fold... %.2f < %.2f %s/%s %.2f' % (win_odds, threshold, call_size, pot_size, pot_odds))
+                lprint(f', Fold {call_size}/{pot_size} {pot_odds:.0f}%, {win_odds} < {threshold:.0f}')
                 do_fold()
 
-        time.sleep(1) # 
+        time.sleep(1) #
+
+def make_threshold(call_ok, stage, my_bet, call_size, pot_odds):
+    if call_size < BIG_BLIND:
+        return pot_odds
+
+    if not call_ok: # all in only
+        # if my_bet is None:
+        #     return max(35, pot_odds)
+        # else:
+        return max(50, pot_odds)
+
+    if stage == 'preflop':
+        return max(19, pot_odds)
+    elif stage == 'flop':
+        return max(35, pot_odds)
+    elif stage == 'turn':
+        return max(40, pot_odds)
+    elif stage == 'river':
+        return max(50, pot_odds)
+
+
+BIG_BLIND = 100000
+# ANDROID_SERIAL=
+if __name__ == '__main__':
+    from sys import argv, exit
+    if len(argv) != 2:
+        print('usage: <big blind>')
+        exit(2)
+    BIG_BLIND = int(argv[1])
+    play()
+
+
+
+
 
 
 # TESTS TESTS TESTS
@@ -541,7 +617,7 @@ def test_ocr():
 EXPECTED_VILLAINS = [7, 7, 3, 3, 3]
 def test_count_villains():
     dirpath = './tests/count_villains'
-    
+
     for i, filename in enumerate(sorted(os.listdir(dirpath))):
         filepath = os.path.join(dirpath, filename)
         image = Image.open(filepath)
@@ -580,14 +656,3 @@ def test_screencaps(d='/home/seb/screencaps-board-bak/'):
         subprocess.Popen(['geeqie', image_path])
         input()
         subprocess.Popen(['killall', 'geeqie'])
-
-BIG_BLIND = 600000
-# ANDROID_SERIAL=
-if __name__ == '__main__':
-    from sys import argv, exit
-    if len(argv) != 2:
-        print('usage: <big blind>')
-        exit(2)
-    BIG_BLIND = int(argv[1])
-    play()
-
