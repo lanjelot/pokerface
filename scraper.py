@@ -116,7 +116,7 @@ def read_board(image):
     board = v1+s1, v2+s2, v3+s3, v4+s4, v5+s5
     return [c for c in board if c in VALID_CARDS]
 
-def read_number(img, region, fiddle=False):
+def read_number(img, region, fiddle=True):
     for offset_x in range(6):
         for offset_y in range(6):
             r = (region[0]-offset_x, region[1]-offset_y, region[2]+offset_x, region[3]+offset_y)
@@ -153,23 +153,51 @@ def read_number(img, region, fiddle=False):
 
     return None
 
-# what I have already bet
-def read_bet(image):
-    if image.getpixel((1070, 655))[0] < 200:
+XY_MY_BET = (1070, 655)
+XY_OPP_BET = [
+        (440, 620), # 1
+        (455, 540), # 2
+        (400, 325), # 3
+        (635, 265), # 4
+        (1415, 270),# 5
+        (1665, 330),# 6
+        (1600, 515),# 7
+        (1600, 605),# 8
+    ]
+
+def read_bet(image, xy=XY_MY_BET):
+    sx, sy = xy # start
+    if not (image.getpixel((sx, sy))[0] > 200 or image.getpixel((sx+150, sy))[0] > 200):
         return None
 
-    first = 0
-    last = 0
-    for x in range(1070, 1170):
-        for y in range(655, 685):
+    x1, y1 = 0, 0
+    x2, y2 = 0, 0
+    for x in range(sx, sx+150):
+        for y in range(sy, sy+40):
             pixel = image.getpixel((x, y))
             if pixel[0] == 0: # == (0, 0, 0, 255):
-                if first == 0:
-                    first = x
-                last = x
-    return read_number(image, (first-3, 656, last+3, 687))
+                if x1 == 0:
+                    x1 = x
+                else:
+                    x1 = min(x1, x)
+                if y1 == 0:
+                    y1 = y
+                else:
+                    y1 = min(y1, y)
+                x2 = max(x2, x)
+                y2 = max(y2, y)
 
-def read_mystack(image, offset_x=-3, offset_x2=3):
+    return read_number(image, (x1-5, y1-5, x2+5, y2+5))
+
+def read_bets(image):
+    bets = {}
+    for i, xy in enumerate(XY_OPP_BET):
+        n = read_bet(image, xy)
+        bets[i] = n
+        # print(f'oppp {i+1}: {n}')
+    return bets
+
+def read_mystack(image):
     first = 0
     last = 0
     for x in range(765, 940):
@@ -179,7 +207,8 @@ def read_mystack(image, offset_x=-3, offset_x2=3):
                 if first == 0:
                     first = x
                 last = x
-    return read_number(image, (first+offset_x, 913, last+offset_x2, 944), True)
+
+    return read_number(image, (first-5, 912, last+5, 943))
     # return read_number(image, (794, 913, 922, 944)) # n.mM OK /o/ y1:912-915 y2:940-944
 
 def read_pot(image):
@@ -195,7 +224,8 @@ def read_pot(image):
                 if first == 0:
                     first = x
                 last = x
-    return read_number(image, (first, 590, last, 627))
+
+    return read_number(image, (first, 590, last, 627), False)
 
 def read_call(image):
     first = 0
@@ -208,7 +238,7 @@ def read_call(image):
                     first = x
                 last = x
 
-    return read_number(image, (first, 985, last, 1040), True)
+    return read_number(image, (first, 985, last, 1040))
 
 REGION_BUTTON3 = (1735, 960, 2145, 1059)
 TEMPLATES_BUTTON3 = {}
@@ -290,16 +320,17 @@ VILLAINS = [
     (1754, 696)
 ]
 
-def count_villains(image):
+def read_villains(image):
     image = image.convert('L')
-    count = 0
+    villains = {}
     for i, (x, y) in enumerate(VILLAINS):
         p1 = image.getpixel((x, y))
         p2 = image.getpixel((x+1, y))
         # print(i, x, y, '->', p1, p2)
         if p1 - p2 > 20:
-            count += 1
-    return count
+            villains[i] = 1
+
+    return villains
 
 XY_FOLD = (1000, 1000) # FOLD
 XY_CALL = (1500, 1000) # CHECK, CALL
@@ -312,7 +343,7 @@ XY_ALL = (2070, 35) # ALL
 def tap(xy):
     x, y = [str(n) for n in xy]
     _ = subprocess.check_output(['adb', 'shell', 'input', 'tap', x, y])
-    time.sleep(.5)
+    time.sleep(.25)
 
 def do_allin():
     tap(XY_BET)
@@ -352,10 +383,6 @@ def can_act(image):
     if image.getpixel((1325, 1010))[0] > 200 or \
         image.getpixel((1755, 1010))[0] > 200 or \
         image.getpixel((895, 1010))[0] > 200:
-        return False
-
-    # hand stength meter
-    if image.getpixel((1760, 935)) != (132, 132, 138, 255):
         return False
 
     # third button is BET, RAISE or ALL-IN
@@ -465,7 +492,7 @@ RANK_CLASS_TO_STRING = {
 }
 
 CACHE_ODDS = {}
-def analyze_odds(cards, board, num_villains):
+def analyze_odds(cards, board, villains):
     s = color_cards(cards)
     s += ' ' * 2
     s += color_cards(board)
@@ -486,6 +513,7 @@ def analyze_odds(cards, board, num_villains):
     else:
         lprint(' '*8)
 
+    num_villains = len(villains)
     lprint(f'vs {num_villains}')
 
     if not board:
@@ -497,20 +525,14 @@ def analyze_odds(cards, board, num_villains):
         else:
             odds = CACHE_ODDS[key] = montecarlo_odds(cards, board, num_villains)
 
-    lprint(f', win {odds:2.0f}')
+    lprint(f', win {odds:5.2f}')
     return odds
 
-
-def call_or_raise(win_odds, stage):
-    if stage in ('turn', 'river') and win_odds > 95:
-        do_bet('ALL')
-    else:
-        do_call()
 
 def bet_or_check(win_odds, stage):
     if stage == 'flop':
         if win_odds > 70:
-            do_bet('ALL')
+            do_bet(BIG_BLIND)
 
     elif stage == 'turn':
         if win_odds > 80:
@@ -532,36 +554,51 @@ def bet_or_check(win_odds, stage):
 
     do_check()
 
-def make_threshold(call_ok, stage, my_bet, call_size, pot_odds, stack_size):
-    if call_size < BIG_BLIND:
-        return pot_odds
+def call_or_fold(win_odds, stage, villains, image):
 
-    return pot_odds
+    stack_size = read_mystack(image)
 
-    if not call_ok: # all in only
-        if my_bet:
-            return max(35, pot_odds)
+    call_ok = can_call(image)
+    if call_ok:
+        call_size = read_call(image)
+    else:
+        call_size = stack_size
+
+    pot_size = read_pot(image) or 0
+
+    if call_size <= BIG_BLIND:
+        # assume everyone calls the BB
+        pot_size += BIG_BLIND * (len(villains) + 1)
+    else:
+        # assume everyone after me folds -> higher pot_odds
+        pot_size += sum(filter(None, read_bets(image).values()))
+        pot_size += read_bet(image, XY_MY_BET) or 0
+        pot_size += call_size
+
+    pot_odds = threshold = 100 * call_size / pot_size
+
+    if call_size > BIG_BLIND*2 and stage == 'preflop':
+        stack_odds = 100 * call_size / stack_size
+        threshold = max(stack_odds, pot_odds)
+
+    call_size = human_format(call_size)
+    pot_size = human_format(pot_size)
+
+    if win_odds > threshold:
+        lprint(f' > {threshold:5.2f}, Call {call_size}/{pot_size} {pot_odds:.0f}%')
+        if not call_ok:
+            do_allin() # press "All-In" in button
+        elif stage in ('turn', 'river') and win_odds > 95:
+            do_bet('ALL')
         else:
-            return max(50, pot_odds)
-
-    if stage == 'preflop':
-        if call_size > BIG_BLIND * 2:
-            return max(50, pot_odds)
-        else:
-            return max(19, pot_odds)
-
-    elif stage == 'flop':
-        return max(40, pot_odds)
-    elif stage == 'turn':
-        return max(50, pot_odds)
-    elif stage == 'river':
-        return max(50, pot_odds)
+            do_call()
+    else:
+        lprint(f' < {threshold:5.2f}, Fold {call_size}/{pot_size} {pot_odds:.0f}%')
+        do_fold()
 
 
-BIG_BLIND = 50000
-
-def play():
-
+def loop():
+    prev_cards = None
     while True:
         try:
             out = subprocess.check_output(['adb', 'exec-out', 'screencap'], timeout=1)
@@ -575,69 +612,45 @@ def play():
         if btns_disabled(image):
             continue
 
-        board = read_board(image)
-        stage = what_stage(board)
-        if stage is None:
-            continue
-
         cards = read_mycards(image)
         if not all(c in VALID_CARDS for c in cards):
             continue
 
-        num_villains = count_villains(image)
-        if not num_villains > 0:
+        if cards != prev_cards:
+            prev_cards = cards
+            villains = {}
+
+        if not len(villains) > 0:
+            villains = read_villains(image)
+            continue
+
+        board = read_board(image)
+        stage = what_stage(board)
+        if not stage:
             continue
 
         if not can_act(image):
             continue
 
-        win_odds = analyze_odds(cards, board, num_villains)
-        
-        check_ok = can_check(image)
-        if check_ok:
-            pot_size = read_pot(image) or 0
+        win_odds = analyze_odds(cards, board, villains)
+
+        if can_check(image):
             bet_or_check(win_odds, stage)
-
         else:
-            stack_size = read_mystack(image)
-            pot_size = read_pot(image) or 0
-
-            call_ok = can_call(image)
-            if not call_ok: # I can only go all in
-                call_size = stack_size
-            else:
-                call_size = read_call(image)
-
-            my_bet = read_bet(image)
-            if my_bet is None:
-                pot_size += (call_size * num_villains) + call_size
-            else:
-                pot_size += (my_bet + call_size) * (num_villains + 1) # bug: misses any previous bets from whoever folded after a raise
-
-            pot_odds = 100 * call_size / pot_size
-            threshold = make_threshold(
-                call_ok, stage, my_bet, call_size, pot_odds, stack_size)
-
-            call_size = human_format(call_size)
-            pot_size = human_format(pot_size)
-
-            if win_odds >= threshold:
-                lprint(f' > {threshold:.0f}, Call {call_size}/{pot_size} {pot_odds:.0f}%')
-
-                if call_ok:
-                    call_or_raise(win_odds, stage)
-                else:
-                    do_allin()
-
-            else:
-                lprint(f' < {threshold:.0f}, Fold {call_size}/{pot_size} {pot_odds:.0f}%')
-                do_fold()
+            call_or_fold(win_odds, stage, villains, image)
 
         print()
         time.sleep(1) #
 
 
-# ANDROID_SERIAL=
+def play():
+    try:
+        loop()
+    except KeyboardInterrupt:
+        pass
+
+BIG_BLIND = 100000
+
 if __name__ == '__main__':
     from sys import argv, exit
     if len(argv) != 2:
@@ -660,7 +673,7 @@ def test_ocr():
     for i, filename in enumerate(sorted(os.listdir(dirpath))):
         filepath = os.path.join(dirpath, filename)
         image = Image.open(filepath)
-        # print(filepath)
+        print(filepath)
 
         actual = read_call(image)
         expected = EXPECTED_CALLS[i]
@@ -677,6 +690,8 @@ def test_ocr():
         if actual != expected:
             print(actual, '!=', expected)
 
+        # read_bets(image)
+
         actual = read_bet(image)
         expected = EXPECTED_BETS[i]
         if actual != expected:
@@ -690,7 +705,7 @@ def test_count_villains():
     for i, filename in enumerate(sorted(os.listdir(dirpath))):
         filepath = os.path.join(dirpath, filename)
         image = Image.open(filepath)
-        actual = count_villains(image)
+        actual = len(read_villains(image))
         expected = EXPECTED_VILLAINS[i]
         if actual != expected:
             print(actual, '!=', expected)
