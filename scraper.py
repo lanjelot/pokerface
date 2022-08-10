@@ -4,9 +4,12 @@ import subprocess
 import random
 import re
 import ast
+import sys
 from hashlib import md5
 from PIL import Image
+from select import select
 
+import getch
 import numpy
 import cv2
 from tesserocr import image_to_text, PyTessBaseAPI, PSM
@@ -116,6 +119,17 @@ def read_board(image):
     board = v1+s1, v2+s2, v3+s3, v4+s4, v5+s5
     return [c for c in board if c in VALID_CARDS]
 
+def human_number(s):
+    s = s.upper()
+    f = float(s[:-1])
+    if s.endswith('K'):
+        f *= 1000
+    elif s.endswith('M'):
+        f *= 1000000
+    elif s.endswith('B'):
+        f *= 1000000000
+    return int(f)
+
 def read_number(img, region, fiddle=True):
     for offset_x in range(6):
         for offset_y in range(6):
@@ -140,14 +154,7 @@ def read_number(img, region, fiddle=True):
                 s = s.replace(',', '')
                 return int(s)
             elif re.match('[0-9.]+[KMB]$', s):
-                f = float(s[:-1])
-                if s.endswith('K'):
-                    f *= 1000
-                elif s.endswith('M'):
-                    f *= 1000000
-                elif s.endswith('B'):
-                    f *= 1000000000
-                return int(f)
+                return human_number(s)
             elif not fiddle:
                 break
 
@@ -346,37 +353,43 @@ def tap(xy):
     time.sleep(.25)
 
 def do_allin():
+    lprint('All in')
     tap(XY_BET)
 
 def do_check():
+    lprint('Check')
     tap(XY_CALL)
 
 def do_call():
+    lprint('Call')
     tap(XY_CALL)
 
 def do_fold():
+    lprint('Fold')
     tap(XY_FOLD)
 
 def do_bet(size=0):
+    lprint('Bet ')
     tap(XY_BET)
 
     if size == 'POT':
+        lprint(f'pot')
         tap(XY_POT)
+
     elif size == 'HALF':
+        lprint(f'half')
         tap(XY_HALF)
+
     elif size == 'ALL':
+        lprint(f'all in')
         tap(XY_ALL)
+
     elif size > 0:
-        for _ in range(1, size // BIG_BLIND):
+        lprint(f'{size}')
+        for _ in range(1, size):
             tap(XY_PLUS)
 
     tap(XY_BET)
-
-    if isinstance(size, int):
-        lprint(', Bet %d bb' % (size // BIG_BLIND))
-    else:
-        lprint(', Bet %s' % size.lower())
-
 
 def can_act(image):
     # one of three buttons already clicked
@@ -415,7 +428,6 @@ def can_callany(image):
 
 def can_check(image):
     return hash_image(image.crop((1440, 985, 1585, 1040))) == '5590b09a2a4c65a1e57aeb7a1d38d6b2'
-
 
 def what_stage(board):
     if len(board) == 0:
@@ -484,15 +496,15 @@ RANK_CLASS_TO_STRING = {
     2: "Four",
     3: "Full",
     4: "Flush",
-    5: "Str8",
+    5: "Strai",
     6: "Three",
-    7: "Two",
+    7: "Two P",
     8: "Pair",
     9: "High"
 }
 
 CACHE_ODDS = {}
-def analyze_odds(cards, board, villains):
+def show_odds(cards, board, villains):
     s = color_cards(cards)
     s += ' ' * 2
     s += color_cards(board)
@@ -514,7 +526,7 @@ def analyze_odds(cards, board, villains):
         lprint(' '*8)
 
     num_villains = len(villains)
-    lprint(f'vs {num_villains}')
+    lprint(f'vs {num_villains}, ')
 
     if not board:
         odds = preflop_odds(cards)[num_villains+1]
@@ -525,22 +537,65 @@ def analyze_odds(cards, board, villains):
         else:
             odds = CACHE_ODDS[key] = montecarlo_odds(cards, board, num_villains)
 
-    lprint(f', win {odds:5.2f}')
+    lprint(f'win {odds:5.2f} ')
     return odds
 
+def read_command():
+    global MANUAL_MODE, BIG_BLIND
+    i, _, _ = select([sys.stdin], [], [], .1)
+    if i:
+        s = i[0].readline().strip()
+        if s == 'm': # mode switch
+            MANUAL_MODE = not MANUAL_MODE
+            print('Mode:', 'MANUAL' if MANUAL_MODE else 'AUTO')
+        elif s.startswith('b'):
+            BIG_BLIND = human_number(s.split()[-1])
+            print('BIG_BLIND:', BIG_BLIND)
+
+def read_choice(should_call=None):
+    s = getch.getch()
+    if s.isnumeric():
+        do_bet(int(s))
+    elif s == 'a':
+        do_bet('ALL')
+    elif s == 'h':
+        do_bet('HALF')
+    elif s == 'p':
+        do_bet('POT')
+    elif s == 'f':
+        do_fold()
+    elif s == 'c':
+        if should_call is None:
+            do_check()
+    else:
+        if should_call is None:
+            do_check()
+        elif should_call:
+            do_call()
+        else:
+            do_fold()
 
 def bet_or_check(win_odds, stage):
+    if MANUAL_MODE:
+        return read_choice()
+
     if stage == 'flop':
         if win_odds > 70:
-            do_bet(BIG_BLIND)
+            do_bet(2)
+        elif win_odds > 50:
+            do_bet(1)
+        else:
+            do_check()
 
     elif stage == 'turn':
         if win_odds > 80:
             do_bet('HALF')
         elif win_odds > 70:
-            do_bet(BIG_BLIND*2)
+            do_bet(2)
         elif win_odds >= 50:
-            do_bet(BIG_BLIND)
+            do_bet(1)
+        else:
+            do_check()
 
     elif stage == 'river':
         if win_odds > 90:
@@ -548,11 +603,13 @@ def bet_or_check(win_odds, stage):
         elif win_odds > 80:
             do_bet('HALF')
         elif win_odds > 70:
-            do_bet(BIG_BLIND*2)
+            do_bet(2)
         elif win_odds >= 50:
-            do_bet(BIG_BLIND)
-
-    do_check()
+            do_bet(1)
+        else:
+            do_check()
+    else:
+        do_check()
 
 def call_or_fold(win_odds, stage, villains, image):
 
@@ -567,10 +624,10 @@ def call_or_fold(win_odds, stage, villains, image):
     pot_size = read_pot(image) or 0
 
     if call_size <= BIG_BLIND:
-        # assume everyone calls the BB
+        # assume everyone will call the BB
         pot_size += BIG_BLIND * (len(villains) + 1)
     else:
-        # assume everyone after me folds -> higher pot_odds
+        # assume everyone after me will fold -> higher pot odds
         pot_size += sum(filter(None, read_bets(image).values()))
         pot_size += read_bet(image, XY_MY_BET) or 0
         pot_size += call_size
@@ -584,18 +641,25 @@ def call_or_fold(win_odds, stage, villains, image):
     call_size = human_format(call_size)
     pot_size = human_format(pot_size)
 
-    if win_odds > threshold:
-        lprint(f' > {threshold:5.2f}, Call {call_size}/{pot_size} {pot_odds:.0f}%')
-        if not call_ok:
-            do_allin() # press "All-In" in button
+    should_call = win_odds > threshold
+
+    if should_call:
+        lprint(f'> {threshold:5.2f} {call_size}/{pot_size}, ')
+    else:
+        lprint(f'< {threshold:5.2f} {call_size}/{pot_size}, ')
+
+    if MANUAL_MODE:
+        return read_choice(should_call)
+
+    if should_call:
+        if not call_ok: # can only tap "All-in"
+            do_allin()
         elif stage in ('turn', 'river') and win_odds > 95:
             do_bet('ALL')
         else:
             do_call()
     else:
-        lprint(f' < {threshold:5.2f}, Fold {call_size}/{pot_size} {pot_odds:.0f}%')
         do_fold()
-
 
 def loop():
     prev_cards = None
@@ -610,18 +674,23 @@ def loop():
             continue
 
         if btns_disabled(image):
+            read_command()
             continue
 
         cards = read_mycards(image)
         if not all(c in VALID_CARDS for c in cards):
             continue
 
-        if cards != prev_cards:
-            prev_cards = cards
-            villains = {}
+        # if cards != prev_cards:
+        #     prev_cards = cards
+            # villains = {}
 
+        # if not len(villains) > 0:
+        #     villains = read_villains(image)
+        #     continue
+
+        villains = read_villains(image)
         if not len(villains) > 0:
-            villains = read_villains(image)
             continue
 
         board = read_board(image)
@@ -632,7 +701,7 @@ def loop():
         if not can_act(image):
             continue
 
-        win_odds = analyze_odds(cards, board, villains)
+        win_odds = show_odds(cards, board, villains)
 
         if can_check(image):
             bet_or_check(win_odds, stage)
@@ -645,18 +714,20 @@ def loop():
 
 def play():
     try:
+        print('BIG_BLIND:', human_format(BIG_BLIND))
+        print('MANUAL_MODE:', MANUAL_MODE)
         loop()
     except KeyboardInterrupt:
         pass
 
-BIG_BLIND = 100000
+BIG_BLIND = 10000
+MANUAL_MODE = True
 
 if __name__ == '__main__':
-    from sys import argv, exit
-    if len(argv) != 2:
+    if len(sys.argv) != 2:
         print('usage: <big blind>')
         exit(2)
-    BIG_BLIND = int(argv[1])
+    BIG_BLIND = int(sys.argv[1])
     play()
 
 
