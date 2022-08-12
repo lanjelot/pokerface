@@ -130,35 +130,35 @@ def human_number(s):
         f *= 1000000000
     return int(f)
 
-def read_number(img, region, fiddle=True):
-    for offset_x in range(6):
-        for offset_y in range(6):
-            r = (region[0]-offset_x, region[1]-offset_y, region[2]+offset_x, region[3]+offset_y)
-            image = img.crop(r).convert('L')
+CACHE_NUMBER = {}
+def read_number(image, region):
+    image = image.crop(region)
 
-            s = image_to_text(image, psm=7).rstrip() # PSM.SINGLE_BLOCK 6 PSM.SINGLE_LINE 7 PSM.SINGLE_WORD 8 PSM.SINGLE_CHAR 10
-            # api = PyTessBaseAPI()
-            # api.SetVariable("tessedit_char_whitelist", 'CALL 0123456789KM.,')
-            # # api.SetPageSegMode(PSM.SINGLE_LINE)
-            # api.SetImage(image)
-            # s = api.GetUTF8Text()
-            # debug
-            # image.save('/tmp/value.png')
-            # print('OCRed: %r' % s.strip())
+    h = hash_image(image)
+    if h in CACHE_NUMBER:
+        return CACHE_NUMBER[h]
 
-            s = s.strip()
-            if s.startswith('CALL '):
-                s = s[5:]
+    image = image.convert('L')
+    s = image_to_text(image, psm=7).rstrip() # PSM.SINGLE_BLOCK 6 PSM.SINGLE_LINE 7 PSM.SINGLE_WORD 8 PSM.SINGLE_CHAR 10
 
-            if re.match('[0-9,]+$', s):
-                s = s.replace(',', '')
-                return int(s)
-            elif re.match('[0-9.]+[KMB]$', s):
-                return human_number(s)
-            elif not fiddle:
-                break
+    # debug
+    # image.save('/tmp/value.png')
+    # print('OCRed: %r' % s.strip())
 
-    return None
+    s = s.strip()
+    if s.startswith('CALL '):
+        s = s[5:]
+
+    n = None
+    if re.match('[0-9,]+$', s):
+        s = s.replace(',', '')
+        n = int(s)
+    elif re.match('[0-9.]+[KMB]$', s):
+        n = human_number(s)
+
+    if n is not None:
+        CACHE_NUMBER[h] = n
+    return n
 
 XY_MY_BET = (1070, 655)
 XY_OPP_BET = [
@@ -172,8 +172,32 @@ XY_OPP_BET = [
         (1600, 605),# 8
     ]
 
+def read_pot(image):
+    sx, sy = 1020, 590
+    if image.getpixel((sx, sy)) != (0, 0, 0, 255):
+        return None
+
+    x1, y1 = 0, 0
+    x2, y2 = 0, 0
+    for x in range(sx, sx+150):
+        for y in range(sy, sy+40):
+            pixel = image.getpixel((x, y))
+            if pixel[0] == 255:
+                if x1 == 0:
+                    x1 = x
+                else:
+                    x1 = min(x1, x)
+                if y1 == 0:
+                    y1 = y
+                else:
+                    y1 = min(y1, y)
+                x2 = max(x2, x)
+                y2 = max(y2, y)
+
+    return read_number(image, (x1-5, y1-5, x2+5, y2+5))
+
 def read_bet(image, xy=XY_MY_BET):
-    sx, sy = xy # start
+    sx, sy = xy
     if not (image.getpixel((sx, sy))[0] > 200 or image.getpixel((sx+150, sy))[0] > 200):
         return None
 
@@ -182,7 +206,7 @@ def read_bet(image, xy=XY_MY_BET):
     for x in range(sx, sx+150):
         for y in range(sy, sy+40):
             pixel = image.getpixel((x, y))
-            if pixel[0] == 0: # == (0, 0, 0, 255):
+            if pixel[0] == 0:
                 if x1 == 0:
                     x1 = x
                 else:
@@ -201,51 +225,35 @@ def read_bets(image):
     for i, xy in enumerate(XY_OPP_BET):
         n = read_bet(image, xy)
         bets[i] = n
-        # print(f'oppp {i+1}: {n}')
+
     return bets
 
-def read_mystack(image):
-    first = 0
-    last = 0
-    for x in range(765, 940):
-        for y in range(912, 944):
-            pixel = image.getpixel((x, y))
-            if pixel[0] > 100:
-                if first == 0:
-                    first = x
-                last = x
-
-    return read_number(image, (first-5, 912, last+5, 943))
-    # return read_number(image, (794, 913, 922, 944)) # n.mM OK /o/ y1:912-915 y2:940-944
-
-def read_pot(image):
-    if image.getpixel((1020, 590)) != (0, 0, 0, 255):
-        return None
-
-    first = 0
-    last = 0
-    for x in range(1020, 1170):
-        for y in range(590, 627):
-            pixel = image.getpixel((x, y))
-            if pixel[0] == 255:
-                if first == 0:
-                    first = x
-                last = x
-
-    return read_number(image, (first, 590, last, 627), False)
-
 def read_call(image):
-    first = 0
-    last = 0
+    x1, y1 = 1710, 1045
+    x2, y2 = 1350, 985
     for x in range(1350, 1710):
-        for y in range(985, 1040):
+        for y in range(985, 1045):
             pixel = image.getpixel((x, y))
             if pixel[0] == 255:
-                if first == 0:
-                    first = x
-                last = x
+                x1 = min(x1, x)
+                y1 = min(y1, y)
+                x2 = max(x2, x)
+                y2 = max(y2, y)
 
-    return read_number(image, (first, 985, last, 1040))
+    # for i in range(6):
+    #     for j in range(6):
+    #         print('ij: (%d, %d)' % (i, j))
+    for i, j in [(0, 0), (0, 1), (0, 2), (0, 5), (0, 3), (1, 0), (1, 5)]:
+        n = read_number(image, (x1-4-i, y1-5-j, x2+4+i, y2+5+j))
+        if n is not None:
+            return n
+
+def read_mystack(image):
+    for y1, y2 in [(0, 0), (0, 2), (0, 1), (0, 4), (0, 3), (1, 0), (2, 0), (2, 1), (1, 2), (2, 3), (1, 1), (-2, 2)]:
+        n = read_number(image, (770, 912+y1, 950, 945-y2))
+        if n is not None:
+            break
+    return n
 
 REGION_BUTTON3 = (1735, 960, 2145, 1059)
 TEMPLATES_BUTTON3 = {}
@@ -255,21 +263,6 @@ for v in ['bet', 'raise', 'allin', 'callany']:
 
 def read_button3(image):
     return match_symbol(image, REGION_BUTTON3, TEMPLATES_BUTTON3)
-
-
-class Timing:
-  def __enter__(self):
-    self.t1 = time.time()
-    return self
-
-  def __exit__(self, exc_type, exc_value, traceback):
-    self.time = '%.2f' % (time.time() - self.t1)
-
-def chunk(s, bs):
-  return [s[i:i + bs] for i in range(0, len(s), bs)]
-
-def fake_sleep(max_secs=3):
-    time.sleep(random.uniform(0.8, max_secs))
 
 def save_image(image):
     # takes 1 second for .png extension, so only use for debugging or save as raw and convert later
@@ -287,6 +280,20 @@ def human_format(num):
         magnitude += 1
         num /= 1000.0
     return '{}{}'.format('{:f}'.format(num).rstrip('0').rstrip('.'), ['', 'K', 'M', 'B', 'T'][magnitude])
+
+class Timing:
+  def __enter__(self):
+    self.t1 = time.time()
+    return self
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    self.time = time.time() - self.t1
+
+def chunk(s, bs):
+  return [s[i:i + bs] for i in range(0, len(s), bs)]
+
+def fake_sleep(max_secs=3):
+    time.sleep(random.uniform(0.8, max_secs))
 
 SPADE = "\u2660"
 HEART = "\u2665"
@@ -414,8 +421,14 @@ def can_raise(image):
 def can_allin(image):
     return read_button3(image) == 'allin'
 
+def can_callany(image):
+    return read_button3(image) == 'callany'
+
 def can_call(image):
-    return can_raise(image) or can_allin(image) and not btn2_disabled(image)
+    return not can_check(image) and not btn2_disabled(image)
+
+def can_check(image):
+    return hash_image(image.crop((1440, 985, 1585, 1040))) == '5590b09a2a4c65a1e57aeb7a1d38d6b2'
 
 def btn2_disabled(image):
     return hash_image(image.crop((1440, 985, 1585, 1040))) == '92653fa84141bd525b8e50c94d868abd'
@@ -423,11 +436,13 @@ def btn2_disabled(image):
 def btns_disabled(image):
     return hash_image(image.crop((900, 985, 2100, 1040))) == '1dda2358e9ddbba55aa5f6742bf7dc82'
 
-def can_callany(image):
-    return read_button3(image) == 'callany'
-
-def can_check(image):
-    return hash_image(image.crop((1440, 985, 1585, 1040))) == '5590b09a2a4c65a1e57aeb7a1d38d6b2'
+def read_button2(image):
+    if can_check(image):
+        return 'check'
+    elif not btn2_disabled(image):
+        return 'call'
+    else:
+        return 'only all in'
 
 def what_stage(board):
     if len(board) == 0:
@@ -613,13 +628,11 @@ def bet_or_check(win_odds, stage):
 
 def call_or_fold(win_odds, stage, villains, image):
 
-    stack_size = read_mystack(image)
-
     call_ok = can_call(image)
     if call_ok:
         call_size = read_call(image)
     else:
-        call_size = stack_size
+        call_size = read_mystack(image)
 
     pot_size = read_pot(image) or 0
 
@@ -635,6 +648,7 @@ def call_or_fold(win_odds, stage, villains, image):
     pot_odds = threshold = 100 * call_size / pot_size
 
     if call_size > BIG_BLIND*2 and stage == 'preflop':
+        stack_size = read_mystack(image)
         stack_odds = 100 * call_size / stack_size
         threshold = max(stack_odds, pot_odds)
 
@@ -662,7 +676,6 @@ def call_or_fold(win_odds, stage, villains, image):
         do_fold()
 
 def loop():
-    prev_cards = None
     while True:
         try:
             out = subprocess.check_output(['adb', 'exec-out', 'screencap'], timeout=1)
@@ -681,14 +694,6 @@ def loop():
         if not all(c in VALID_CARDS for c in cards):
             continue
 
-        # if cards != prev_cards:
-        #     prev_cards = cards
-            # villains = {}
-
-        # if not len(villains) > 0:
-        #     villains = read_villains(image)
-        #     continue
-
         villains = read_villains(image)
         if not len(villains) > 0:
             continue
@@ -699,6 +704,9 @@ def loop():
             continue
 
         if not can_act(image):
+            read_bets(image)
+            read_mystack(image)
+            read_pot(image)
             continue
 
         win_odds = show_odds(cards, board, villains)
@@ -720,25 +728,57 @@ def play():
     except KeyboardInterrupt:
         pass
 
-BIG_BLIND = 10000
+BIG_BLIND = 50000
 MANUAL_MODE = True
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print('usage: <big blind>')
-        exit(2)
-    BIG_BLIND = int(sys.argv[1])
+    # test_perf()
     play()
+    # if len(sys.argv) != 2:
+    #     print('usage: <big blind>')
+    #     exit(2)
+    # BIG_BLIND = int(sys.argv[1])
+    # play()
 
 
 
 
 # TESTS TESTS TESTS
 
+def test_perf():
+    dirpath = '/home/seb/screencaps-auto'
+    stats = []
+    filemap = {}
+    for i, filename in enumerate(sorted(os.listdir(dirpath))):
+        filepath = os.path.join(dirpath, filename)
+        image = Image.open(filepath)
+
+        print(filepath)
+        with Timing() as timing:
+            # _ = read_bets(image)
+            # _ = read_bet(image)
+            # _ = read_pot(image)
+            # n = read_mystack(image)
+            if not read_button2(image) == 'call':
+                continue
+            n = read_call(image)
+            if n is None:
+                break
+
+        # print(filepath, '%.2f' % timing.time)
+        filemap[filepath] = timing.time
+        stats.append(timing.time)
+    print('max: %.2f' %  max(stats))
+    print('min: %.2f' %  min(stats))
+    print('avg: %.2f' %  (sum(stats)/len(stats)))
+    return stats, filemap
+
 EXPECTED_CALLS = [30000, 40000, 80000, 50000, 5000, 10000, 40000, 27260, 50450, 15700, 190000, 255000, 258230, 35000, 250000, 110000, 181830, 90000, 507000, 25000, 267850, 200000, 650000, 6160000, 100000, 1500000, 1000000, 200000, 600000, 600000, 500000]
 EXPECTED_MYSTACKS = [160450, 125000, 85000, 75000, 60000, 55000, 45000, 424750, 417736, 367286, 349650, 286334, 813884, 1100000, 656930, 1100000, 1000000, 157169, 4800000, 2000000, 1300000, 3700000, 2900000, 7100000, 5100000, 3900000, 1500000, 6300000, 13800000, 4400000, 3700000]
 EXPECTED_POTS = [50000, 40000, 160000, 40000, None, None, None, 25000, 30000, 130900, None, None, None, None, 450000, 120000, 40000, 180000, None, None, None, None, None, 750000, None, None, 5100000, None, 650000, 400000, 1700000]
 EXPECTED_BETS = [None, None, None, None, 5000, None, 10000, None, None, None, 10000, 5000, 45000, 45000, None, None, None, None, 50000, 25000, 650000, None, 850000, None, 100000, 100000, None, 200000, None, 50000, 50000]
+EXPECTED_BETS_SUM = [30000, 80000, 160000, 100000, 30000, 15000, 100000, 27260, 50450, 15700, 356730, 300000, 363230, 170000, 250000, 110000, 181830, 90000, 682000, 150000, 1755350, 325000, 3690000, 6160000, 800000, 2000000, 1000000, 900000, 600000, 650000, 550000]
+
 def test_ocr():
     dirpath = './tests/screencaps'
     for i, filename in enumerate(sorted(os.listdir(dirpath))):
@@ -761,13 +801,19 @@ def test_ocr():
         if actual != expected:
             print(actual, '!=', expected)
 
-        # read_bets(image)
-
         actual = read_bet(image)
         expected = EXPECTED_BETS[i]
         if actual != expected:
             print(actual, '!=', expected)
+
+        bets = read_bets(image)
+        actual = sum(filter(None, bets.values()))
+        expected = EXPECTED_BETS_SUM[i]
+        if actual != expected:
+            print(actual, '!=', expected)
+
         print('.')
+
 
 EXPECTED_VILLAINS = [7, 7, 3, 3, 3]
 def test_count_villains():
