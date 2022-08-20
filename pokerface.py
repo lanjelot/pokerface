@@ -15,6 +15,54 @@ from treys import Card
 from treys import Evaluator
 
 
+class Timing:
+  def __enter__(self):
+    self.t1 = time.time()
+    return self
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    self.time = time.time() - self.t1
+
+def chunk(s, bs):
+  return [s[i:i + bs] for i in range(0, len(s), bs)]
+
+def fake_sleep(max_secs=3):
+    time.sleep(random.uniform(0.8, max_secs))
+
+def hash_image(image):
+    return md5(image.tobytes()).hexdigest()
+
+def save_image(image):
+    # takes 1 second for a .png extension, so we save as raw and convert later
+    filepath = '/home/seb/screencaps-auto/%d.raw' % time.time()
+    if os.path.isfile(filepath):
+        return
+    with open(filepath, 'wb') as f:
+        f.write(image.tobytes())
+
+SPADE = "\u2660"
+HEART = "\u2665"
+DIAMOND = "\u2666"
+CLUB = "\u2663"
+RED = "\x1b[91m"
+MAGENTA = "\x1b[95m"
+BLUE = "\x1b[94m"
+RESET = "\x1b[0m"
+
+def color_cards(cards):
+    colored = []
+    for card in cards:
+        value, suit = card[0], card[1]
+        if suit == 's':
+            colored.append(value + SPADE)
+        elif suit == 'c':
+            colored.append(BLUE+ value + CLUB + RESET)
+        elif suit == 'h':
+            colored.append(RED + value + HEART + RESET)
+        elif suit == 'd':
+            colored.append(MAGENTA + value + DIAMOND + RESET)
+    return ' '.join(colored)
+
 CARD_VALUES = "23456789TJQKA"
 CARD_SUITS = "shdc"
 
@@ -64,9 +112,6 @@ REGION_BOARD2_SUIT = (925, 470, 970, 520)
 REGION_BOARD3_SUIT = (1050, 470, 1095, 520)
 REGION_BOARD4_SUIT = (1175, 470, 1210, 520)
 REGION_BOARD5_SUIT = (1295, 470, 1330, 520)
-
-def hash_image(image):
-    return md5(image.tobytes()).hexdigest()
 
 CACHE_SYMBOL = {}
 def match_symbol(image, region, templates):
@@ -128,6 +173,14 @@ def unpack_number(s):
         f *= 1000000000
     return int(f)
 
+def pack_number(num):
+    num = float('{:.3g}'.format(num))
+    magnitude = 0
+    while abs(num) >= 1000:
+        magnitude += 1
+        num /= 1000.0
+    return '{}{}'.format('{:f}'.format(num).rstrip('0').rstrip('.'), ['', 'K', 'M', 'B', 'T'][magnitude])
+
 CACHE_NUMBER = {}
 def read_number(image, region):
     image = image.crop(region)
@@ -158,18 +211,6 @@ def read_number(image, region):
         CACHE_NUMBER[h] = n
     return n
 
-XY_MY_BET = (1070, 655)
-XY_VILLAIN_BET = [
-        (440, 620), # 1
-        (455, 540), # 2
-        (400, 325), # 3
-        (635, 265), # 4
-        (1415, 270),# 5
-        (1665, 330),# 6
-        (1600, 515),# 7
-        (1600, 605),# 8
-    ]
-
 def read_pot(image):
     sx, sy = 1020, 590
     if image.getpixel((sx, sy)) != (0, 0, 0, 255):
@@ -193,6 +234,18 @@ def read_pot(image):
                 y2 = max(y2, y)
 
     return read_number(image, (x1-5, y1-5, x2+5, y2+5))
+
+XY_MY_BET = (1070, 655)
+XY_VILLAIN_BET = [
+        (440, 620), # 1
+        (455, 540), # 2
+        (400, 325), # 3
+        (635, 265), # 4
+        (1415, 270),# 5
+        (1665, 330),# 6
+        (1600, 515),# 7
+        (1600, 605),# 8
+    ]
 
 def read_bet(image, xy=XY_MY_BET):
     sx, sy = xy
@@ -284,64 +337,6 @@ def read_bigblind(image):
     else:
         return read_bet(image, XY_MY_BET)
 
-def save_image(image):
-    # takes 1 second for .png extension, so only use for debugging or save as raw and convert later
-    filepath = '/home/seb/screencaps-auto/%d.raw' % time.time()
-    if os.path.isfile(filepath):
-        return
-    with open(filepath, 'wb') as f:
-        f.write(image.tobytes())
-    # image.save(filepath)
-
-def pack_number(num):
-    num = float('{:.3g}'.format(num))
-    magnitude = 0
-    while abs(num) >= 1000:
-        magnitude += 1
-        num /= 1000.0
-    return '{}{}'.format('{:f}'.format(num).rstrip('0').rstrip('.'), ['', 'K', 'M', 'B', 'T'][magnitude])
-
-class Timing:
-  def __enter__(self):
-    self.t1 = time.time()
-    return self
-
-  def __exit__(self, exc_type, exc_value, traceback):
-    self.time = time.time() - self.t1
-
-def chunk(s, bs):
-  return [s[i:i + bs] for i in range(0, len(s), bs)]
-
-def fake_sleep(max_secs=3):
-    time.sleep(random.uniform(0.8, max_secs))
-
-SPADE = "\u2660"
-HEART = "\u2665"
-DIAMOND = "\u2666"
-CLUB = "\u2663"
-RED = "\x1b[91m"
-MAGENTA = "\x1b[95m"
-BLUE = "\x1b[94m"
-RESET = "\x1b[0m"
-
-def color_cards(cards):
-    colored = []
-    for card in cards:
-        value, suit = card[0], card[1]
-        if suit == 's':
-            colored.append(value + SPADE)
-        elif suit == 'c':
-            colored.append(BLUE+ value + CLUB + RESET)
-        elif suit == 'h':
-            colored.append(RED + value + HEART + RESET)
-        elif suit == 'd':
-            colored.append(MAGENTA + value + DIAMOND + RESET)
-    return ' '.join(colored)
-
-def lprint(s):
-    print(s, end='', flush=True)
-
-
 # clockwise starting from my left
 XY_VILLAIN_CARDS = [
     (495, 709),
@@ -350,7 +345,7 @@ XY_VILLAIN_CARDS = [
     (933, 263),
     (1351, 263),
     (1738, 260),
-    (1773, 445),
+    (1773, 446),
     (1754, 696)
 ]
 
@@ -358,10 +353,11 @@ def read_villains(image):
     image = image.convert('L')
     villains = {}
     for i, (x, y) in enumerate(XY_VILLAIN_CARDS):
-        p1 = image.getpixel((x, y))
-        p2 = image.getpixel((x+1, y))
-        # print(i, x, y, '->', p1, p2)
-        if p1 - p2 > 20:
+        p1 = image.getpixel((x-20, y+20))
+        p2 = image.getpixel((x+10, y+20))
+        delta = abs(p1 - p2)
+        # print(i, x, y, '->', p1, p2, delta)
+        if delta > 25:
             villains[i] = 1
 
     return villains
@@ -378,6 +374,9 @@ def tap(xy):
     x, y = [str(n) for n in xy]
     _ = subprocess.check_output(['adb', 'shell', 'input', 'tap', x, y])
     time.sleep(.25)
+
+def lprint(s):
+    print(s, end='', flush=True)
 
 def do_check():
     lprint('Check')
@@ -464,7 +463,7 @@ def read_button2(image):
     else:
         return 'only all in'
 
-def what_stage(board):
+def what_street(board):
     if len(board) == 0:
         return 'preflop'
     elif len(board) == 3:
@@ -615,11 +614,11 @@ def read_choice(should):
             MANUAL_MODE = not MANUAL_MODE
             print_mode()
 
-def bet_or_check(win_odds, stage):
+def bet_or_check(win_odds, street):
     if MANUAL_MODE:
         return read_choice('check')
 
-    if stage == 'flop':
+    if street == 'flop':
         if win_odds > 70:
             do_bet(2)
         elif win_odds > 50:
@@ -627,7 +626,7 @@ def bet_or_check(win_odds, stage):
         else:
             do_check()
 
-    elif stage == 'turn':
+    elif street == 'turn':
         if win_odds > 80:
             do_bet('HALF')
         elif win_odds > 70:
@@ -637,7 +636,7 @@ def bet_or_check(win_odds, stage):
         else:
             do_check()
 
-    elif stage == 'river':
+    elif street == 'river':
         if win_odds > 90:
             do_bet('POT')
         elif win_odds > 80:
@@ -651,7 +650,7 @@ def bet_or_check(win_odds, stage):
     else:
         do_check()
 
-def call_or_fold(win_odds, stage, image):
+def call_or_fold(win_odds, street, image):
 
     if can_call(image):
         call_size = read_call(image)
@@ -661,13 +660,13 @@ def call_or_fold(win_odds, stage, image):
     villain_bets = read_bets(image)
 
     pot_size = read_pot(image) or 0
-    pot_size += sum(filter(None, villain_bets.values())) # assume everyone after me will fold = higher pot odds
+    pot_size += sum(filter(None, villain_bets.values())) # assume everyone after me will fold -> higher pot odds
     pot_size += read_bet(image, XY_MY_BET) or 0
     pot_size += call_size
 
     pot_odds = threshold = 100 * call_size / pot_size
 
-    if stage != 'preflop':
+    if street != 'preflop':
         num_villains = len(read_villains(image)) # assume everyone after me will call
         threshold = max(pot_odds, 100/(num_villains+1))
 
@@ -687,7 +686,7 @@ def call_or_fold(win_odds, stage, image):
     if should == 'fold':
         do_fold()
     else:
-        if stage in ('turn', 'river') and win_odds > 95: # raise all in
+        if street in ('turn', 'river') and win_odds > 95: # raise all in
             do_bet('ALL')
         else:
             do_call()
@@ -712,7 +711,10 @@ def make_key(cards, board, image):
 SHOW_CACHE = []
 def loop():
     global IMAGE, BIG_BLIND, SHOW_CACHE
+
     prev_cards = None
+    prev_board = None
+
     while True:
         try:
             out = subprocess.check_output(['adb', 'exec-out', 'screencap'], timeout=1)
@@ -728,10 +730,11 @@ def loop():
             continue
 
         if cards != prev_cards:
-            BIG_BLIND = read_bigblind(image)
             SHOW_CACHE = []
+            BIG_BLIND = read_bigblind(image)
             num_villains = 0
             prev_cards = cards
+            print()
 
         if not BIG_BLIND:
             # waiting start of next round
@@ -742,8 +745,12 @@ def loop():
             continue
 
         board = read_board(image)
-        stage = what_stage(board)
-        if not stage:
+        if len(board) > 0 and len(board) < len(prev_board):
+            continue
+        prev_board = board
+
+        street = what_street(board)
+        if not street:
             continue
 
         key = make_key(cards, board, image)
@@ -755,9 +762,9 @@ def loop():
             continue
 
         if can_check(image):
-            bet_or_check(win_odds, stage)
+            bet_or_check(win_odds, street)
         else:
-            call_or_fold(win_odds, stage, image)
+            call_or_fold(win_odds, street, image)
 
 def play():
     try:
@@ -808,6 +815,7 @@ EXPECTED_MYSTACKS = [160450, 125000, 85000, 75000, 60000, 55000, 45000, 424750, 
 EXPECTED_POTS = [50000, 40000, 160000, 40000, None, None, None, 25000, 30000, 130900, None, None, None, None, 450000, 120000, 40000, 180000, None, None, None, None, None, 750000, None, None, 5100000, None, 650000, 400000, 1700000]
 EXPECTED_BETS = [None, None, None, None, 5000, None, 10000, None, None, None, 10000, 5000, 45000, 45000, None, None, None, None, 50000, 25000, 650000, None, 850000, None, 100000, 100000, None, 200000, None, 50000, 50000]
 EXPECTED_BETS_SUM = [30000, 80000, 160000, 100000, 30000, 15000, 100000, 27260, 50450, 15700, 356730, 300000, 363230, 170000, 250000, 110000, 181830, 90000, 682000, 150000, 1755350, 325000, 3690000, 6160000, 800000, 2000000, 1000000, 900000, 600000, 650000, 550000]
+EXPECTED_VILLAINS = [3, 2, 2, 2, 3, 2, 2, 1, 2, 1, 2, 3, 2, 2, 1, 1, 1, 3, 3, 3, 2, 5, 3, 2, 4, 3, 1, 2, 1, 1, 1]
 
 def test_ocr():
     dirpath = './tests/screencaps'
@@ -816,93 +824,36 @@ def test_ocr():
         image = Image.open(filepath)
         print(filepath)
 
-        actual = read_call(image)
-        expected = EXPECTED_CALLS[i]
-        if actual != expected:
-            print(actual, '!=', expected)
+        # actual = read_call(image)
+        # expected = EXPECTED_CALLS[i]
+        # if actual != expected:
+        #     print(actual, '!=', expected)
 
-        actual = read_mystack(image)
-        expected = EXPECTED_MYSTACKS[i]
-        if actual != expected:
-            print(actual, '!=', expected)
+        # actual = read_mystack(image)
+        # expected = EXPECTED_MYSTACKS[i]
+        # if actual != expected:
+        #     print(actual, '!=', expected)
 
-        actual = read_pot(image)
-        expected = EXPECTED_POTS[i]
-        if actual != expected:
-            print(actual, '!=', expected)
+        # actual = read_pot(image)
+        # expected = EXPECTED_POTS[i]
+        # if actual != expected:
+        #     print(actual, '!=', expected)
 
-        actual = read_bet(image)
-        expected = EXPECTED_BETS[i]
-        if actual != expected:
-            print(actual, '!=', expected)
+        # actual = read_bet(image)
+        # expected = EXPECTED_BETS[i]
+        # if actual != expected:
+        #     print(actual, '!=', expected)
 
-        bets = read_bets(image)
-        actual = sum(filter(None, bets.values()))
-        expected = EXPECTED_BETS_SUM[i]
+        # bets = read_bets(image)
+        # actual = sum(filter(None, bets.values()))
+        # expected = EXPECTED_BETS_SUM[i]
+        # if actual != expected:
+        #     print(actual, '!=', expected)
+
+        actual = len(read_villains(image))
+        expected = EXPECTED_VILLAINS[i]
         if actual != expected:
             print(actual, '!=', expected)
 
         print('.')
 
-def test_tournament():
-    dirpath = './tests/tournament'
-    for i, filename in enumerate(sorted(os.listdir(dirpath))):
-        filepath = os.path.join(dirpath, filename)
-        image = Image.open(filepath)
-        stack = read_mystack(image)
-        bb = read_bigblind(image)
-        print(filepath, bb, stack)
-
-def test_read_bigblind():
-    dirpath = './tests/bb'
-    for i, filename in enumerate(sorted(os.listdir(dirpath))):
-        filepath = os.path.join(dirpath, filename)
-        image = Image.open(filepath)
-        actual = read_bigblind(image)
-        expected = 50000
-        # if actual != expected:
-            # print(actual, '!=', expected)
-        print(filepath, actual)
-
-EXPECTED_VILLAINS = [7, 7, 3, 3, 3]
-def test_count_villains():
-    dirpath = './tests/count_villains'
-
-    for i, filename in enumerate(sorted(os.listdir(dirpath))):
-        filepath = os.path.join(dirpath, filename)
-        image = Image.open(filepath)
-        actual = len(read_villains(image))
-        expected = EXPECTED_VILLAINS[i]
-        if actual != expected:
-            print(actual, '!=', expected)
-        print(filepath, actual)
-
-def blah():
-    d = '/home/seb/actions-new'
-    # xy = (1885, 1010) # button 3
-    # xy = (1905, 1010) # button 3
-    # xy = (1445, 1010) # button 2
-    for i, f in enumerate(sorted(os.listdir(d))):
-        image_path = os.path.join(d, f)
-        image = Image.open(image_path)
-        # pixel = image.getpixel(xy)
-        # print(pixel, image_path)
-        print(image_path, can_bet(image))
-        # print('can_act:', can_act(image))
-        # print(
-        # print('can_raise:', can_raise(image))
-        # print('can_allin:', can_allin(image))
-        # print('can_check:', can_check(image))
-
-def test_screencaps(d='/home/seb/screencaps-board-bak/'):
-    for i, f in enumerate(sorted(os.listdir(d))):
-        image_path = os.path.join(d, f)
-        image = Image.open(image_path)
-
-        actual = read_board(image)
-        # actual = read_mycards(image)
-        pp_cards(actual)
-
-        subprocess.Popen(['geeqie', image_path])
-        input()
-        subprocess.Popen(['killall', 'geeqie'])
