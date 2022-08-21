@@ -353,11 +353,14 @@ def read_villains(image):
     image = image.convert('L')
     villains = {}
     for i, (x, y) in enumerate(XY_VILLAIN_CARDS):
-        p1 = image.getpixel((x-20, y+20))
-        p2 = image.getpixel((x+10, y+20))
-        delta = abs(p1 - p2)
-        # print(i, x, y, '->', p1, p2, delta)
-        if delta > 25:
+        border = image.getpixel((x, y))
+        middle = image.getpixel((x-20, y+20))
+        outside = image.getpixel((x+10, y+20))
+        delta1 = abs(border - outside)
+        delta2 = abs(middle - outside)
+        # print(i, x, y, '->', border, middle, outside, delta1, delta2)
+ 
+        if delta1 > 50 or delta2 > 50:
             villains[i] = 1
 
     return villains
@@ -810,12 +813,12 @@ def test_perf():
     print('avg: %.2f' %  (sum(stats)/len(stats)))
     return stats, filemap
 
-EXPECTED_CALLS = [30000, 40000, 80000, 50000, 5000, 10000, 40000, 27260, 50450, 15700, 190000, 255000, 258230, 35000, 250000, 110000, 181830, 90000, 507000, 25000, 267850, 200000, 650000, 6160000, 100000, 1500000, 1000000, 200000, 600000, 600000, 500000]
-EXPECTED_MYSTACKS = [160450, 125000, 85000, 75000, 60000, 55000, 45000, 424750, 417736, 367286, 349650, 286334, 813884, 1100000, 656930, 1100000, 1000000, 157169, 4800000, 2000000, 1300000, 3700000, 2900000, 7100000, 5100000, 3900000, 1500000, 6300000, 13800000, 4400000, 3700000]
-EXPECTED_POTS = [50000, 40000, 160000, 40000, None, None, None, 25000, 30000, 130900, None, None, None, None, 450000, 120000, 40000, 180000, None, None, None, None, None, 750000, None, None, 5100000, None, 650000, 400000, 1700000]
-EXPECTED_BETS = [None, None, None, None, 5000, None, 10000, None, None, None, 10000, 5000, 45000, 45000, None, None, None, None, 50000, 25000, 650000, None, 850000, None, 100000, 100000, None, 200000, None, 50000, 50000]
-EXPECTED_BETS_SUM = [30000, 80000, 160000, 100000, 30000, 15000, 100000, 27260, 50450, 15700, 356730, 300000, 363230, 170000, 250000, 110000, 181830, 90000, 682000, 150000, 1755350, 325000, 3690000, 6160000, 800000, 2000000, 1000000, 900000, 600000, 650000, 550000]
-EXPECTED_VILLAINS = [3, 2, 2, 2, 3, 2, 2, 1, 2, 1, 2, 3, 2, 2, 1, 1, 1, 3, 3, 3, 2, 5, 3, 2, 4, 3, 1, 2, 1, 1, 1]
+EXPECTED_CALL = [30000, 40000, 80000, 50000, 5000, 10000, 40000, 27260, 50450, 15700, 190000, 255000, 258230, 35000, 250000, 110000, 181830, 90000, 507000, 25000, 267850, 200000, 650000, 6160000, 100000, 1500000, 1000000, 200000, 600000, 600000, 500000, None, 50000, 30000]
+EXPECTED_MYSTACK = [160450, 125000, 85000, 75000, 60000, 55000, 45000, 424750, 417736, 367286, 349650, 286334, 813884, 1100000, 656930, 1100000, 1000000, 157169, 4800000, 2000000, 1300000, 3700000, 2900000, 7100000, 5100000, 3900000, 1500000, 6300000, 13800000, 4400000, 3700000, 220000, 200000, 200000]
+EXPECTED_POT = [50000, 40000, 160000, 40000, None, None, None, 25000, 30000, 130900, None, None, None, None, 450000, 120000, 40000, 180000, None, None, None, None, None, 750000, None, None, 5100000, None, 650000, 400000, 1700000, 40000, None, None]
+EXPECTED_BET = [None, None, None, None, 5000, None, 10000, None, None, None, 10000, 5000, 45000, 45000, None, None, None, None, 50000, 25000, 650000, None, 850000, None, 100000, 100000, None, 200000, None, 50000, 50000, None, 10000, None]
+EXPECTED_BETS_SUM = [30000, 80000, 160000, 100000, 30000, 15000, 100000, 27260, 50450, 15700, 356730, 300000, 363230, 170000, 250000, 110000, 181830, 90000, 682000, 150000, 1755350, 325000, 3690000, 6160000, 800000, 2000000, 1000000, 900000, 600000, 650000, 550000, 0, 140000, 45000]
+EXPECTED_VILLAIN = [3, 2, 2, 2, 3, 2, 2, 1, 2, 1, 2, 3, 2, 2, 1, 1, 1, 3, 3, 3, 2, 5, 3, 2, 4, 3, 1, 2, 1, 1, 1, 3, 4, 3]
 
 def test_ocr():
     dirpath = './tests/screencaps'
@@ -824,34 +827,34 @@ def test_ocr():
         image = Image.open(filepath)
         print(filepath)
 
-        # actual = read_call(image)
-        # expected = EXPECTED_CALLS[i]
-        # if actual != expected:
-        #     print(actual, '!=', expected)
+        actual = read_call(image)
+        expected = EXPECTED_CALL[i]
+        if actual != expected:
+            print(actual, '!=', expected)
 
-        # actual = read_mystack(image)
-        # expected = EXPECTED_MYSTACKS[i]
-        # if actual != expected:
-        #     print(actual, '!=', expected)
+        actual = read_mystack(image)
+        expected = EXPECTED_MYSTACK[i]
+        if actual != expected:
+            print(actual, '!=', expected)
 
-        # actual = read_pot(image)
-        # expected = EXPECTED_POTS[i]
-        # if actual != expected:
-        #     print(actual, '!=', expected)
+        actual = read_pot(image)
+        expected = EXPECTED_POT[i]
+        if actual != expected:
+            print(actual, '!=', expected)
 
-        # actual = read_bet(image)
-        # expected = EXPECTED_BETS[i]
-        # if actual != expected:
-        #     print(actual, '!=', expected)
+        actual = read_bet(image)
+        expected = EXPECTED_BET[i]
+        if actual != expected:
+            print(actual, '!=', expected)
 
-        # bets = read_bets(image)
-        # actual = sum(filter(None, bets.values()))
-        # expected = EXPECTED_BETS_SUM[i]
-        # if actual != expected:
-        #     print(actual, '!=', expected)
+        bets = read_bets(image)
+        actual = sum(filter(None, bets.values()))
+        expected = EXPECTED_BETS_SUM[i]
+        if actual != expected:
+            print(actual, '!=', expected)
 
         actual = len(read_villains(image))
-        expected = EXPECTED_VILLAINS[i]
+        expected = EXPECTED_VILLAIN[i]
         if actual != expected:
             print(actual, '!=', expected)
 
