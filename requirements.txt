@@ -1,3 +1,4 @@
+pillow
 treys
 #cv2 # dnf install python3-opencv
 numpy

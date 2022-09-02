@@ -6,6 +6,9 @@ import re
 import ast
 from hashlib import md5
 from PIL import Image
+import itertools
+from multiprocessing import Queue, Process, active_children, cpu_count
+from queue import Empty
 
 import getch
 import numpy
@@ -34,7 +37,7 @@ def hash_image(image):
 
 def save_image(image):
     # takes 1 second for a .png extension, so we save as raw and convert later
-    filepath = '/home/seb/screencaps-auto/%d.raw' % time.time()
+    filepath = '/home/moi/screencaps-auto/%d.raw' % time.time()
     if os.path.isfile(filepath):
         return
     with open(filepath, 'wb') as f:
@@ -125,16 +128,22 @@ def match_symbol(image, region, templates):
     image_gray = cv2.cvtColor(numpy.array(image), cv2.COLOR_BGR2GRAY)
     best_score = 0
     best_match = '?'
+
     for value, template in templates.items():
         res = cv2.matchTemplate(image_gray, template, cv2.TM_CCOEFF_NORMED)
         loc = numpy.where(res >= 0.8)
+
+        # debug
         # print(value, loc)
+
         score = len(loc[0])+len(loc[1])
         if score > best_score:
             best_score = score
             best_match = value
 
-    CACHE_SYMBOL[h] = best_match
+    if best_score > 0:
+        CACHE_SYMBOL[h] = best_match
+
     return best_match
 
 def read_mycards(image):
@@ -233,7 +242,7 @@ def read_pot(image):
                 x2 = max(x2, x)
                 y2 = max(y2, y)
 
-    return read_number(image, (x1-5, y1-5, x2+5, y2+5))
+    return read_number(image, (x1-5, y1-5, x2+5, y2+6))
 
 XY_MY_BET = (1070, 655)
 XY_VILLAIN_BET = [
@@ -304,8 +313,8 @@ def read_mystack(image):
         sx1, sy1, sx2, sy2 = 770, 912, 950, 945 # cash game
     else:
         sx1, sy1, sx2, sy2 = 780, 885, 960, 918 # tournament
-    for y1, y2 in [(0, 0), (0, 2), (0, 1), (0, 4), (0, 3), (1, 0), (2, 0), (2, 1), (1, 2), (2, 3), (1, 1), (-2, 2)]:
-        n = read_number(image, (sx1, sy1+y1, sx2, sy2-y2))
+    for y1, y2 in [(0, 1), (0, 2), (0, 0), (0, 4), (0, 3), (1, 0), (2, 0), (2, 1), (1, 2), (2, 3), (1, 1), (-2, 2)]:
+        n = read_number(image, (sx1, sy1+y1, sx2, sy2+y2))
         if n is not None:
             break
     return n
@@ -319,6 +328,7 @@ for v in ['bet', 'raise', 'allin', 'callany']:
 def read_button3(image):
     return match_symbol(image, REGION_BUTTON3, TEMPLATES_BUTTON3)
 
+# clockwise starting from my left
 XY_VILLAIN_BB = [
     (193, 769),  # 1
     (152, 491),  # 2
@@ -359,7 +369,7 @@ def read_villains(image):
         delta1 = abs(border - outside)
         delta2 = abs(middle - outside)
         # print(i, x, y, '->', border, middle, outside, delta1, delta2)
- 
+
         if delta1 > 50 or delta2 > 50:
             villains[i] = 1
 
@@ -406,7 +416,7 @@ def do_bet(size=0):
         tap(XY_POT)
 
     elif size == 'HALF':
-        lprint(f'half')
+        lprint(f'half pot')
         tap(XY_HALF)
 
     elif size == 'ALL':
@@ -493,39 +503,89 @@ def preflop_odds(cards):
 VALID_CARDS = [x + y for x in CARD_VALUES for y in CARD_SUITS]
 FULL_DECK = [Card.new(c) for c in VALID_CARDS]
 
-def montecarlo_odds(cards, board, num_villains):
-    '''Compute win % using a Monte Carlo simulation'''
-    board = [Card.new(c) for c in board]
-    cards = [Card.new(c) for c in cards]
-
-    all_cards = FULL_DECK[:]
-    for c in cards + board:
-        all_cards.remove(c)
-
+def simulate_board(task_queue, result_queue):
     evaluator = Evaluator()
 
-    rounds = 10000
-    wins = 0
-    for _ in range(rounds):
-        deck = all_cards[:]
-        random.shuffle(deck)
+    while True:
+        try:
+            data = task_queue.get_nowait()
+        except Empty:
+            time.sleep(.1)
+            continue
 
-        full_board = board[:]
-        for _ in range(5 - len(board)):
-            full_board.append(deck.pop())
+        if data is None:
+            return
 
-        my_score = evaluator.evaluate(full_board, cards)
+        my_cards, board, next_cards = data
 
-        for _ in range(num_villains):
-            their_cards = [deck.pop(), deck.pop()]
+        full_board = board + next_cards
+        my_score = evaluator.evaluate(full_board, my_cards)
+
+        deck = FULL_DECK[:]
+        for c in my_cards + full_board:
+            deck.remove(c)
+
+        losses = 0
+        wins = 0
+
+        for their_cards in itertools.combinations(deck, 2):
             their_score = evaluator.evaluate(full_board, their_cards)
 
-            if my_score > their_score:  # they win
-                break
-        else:
-            wins += 1
+            if my_score > their_score:
+                losses += 1
+            else:
+                wins += 1 # win or tie
 
-    return round(100 * wins / rounds, 2)
+        result_queue.put((losses, wins))
+
+def simulate_all(my_cards, board):
+    '''
+    number of possible 2-card combinations given 52-card deck (aka holecards): 1326
+    number of possible 3-card combinations given 50-card deck (aka flop): 16215
+    number of possible 5-card combinations given 50-card deck (aka boards): 2118760
+    number of possible 2-card combinations given 45-card deck: 990
+    '''
+
+    board = tuple(Card.new(c) for c in board)
+    my_cards = tuple(Card.new(c) for c in my_cards)
+
+    deck = FULL_DECK[:]
+    for c in my_cards + board:
+        deck.remove(c)
+
+    task_queue = Queue()
+    result_queue = Queue()
+
+    num_workers = cpu_count()
+
+    for _ in range(num_workers):
+        p = Process(target=simulate_board, args=(task_queue, result_queue))
+        # p.daemon = True
+        p.start()
+
+    for next_cards in itertools.combinations(deck, 5 - len(board)):
+        task_queue.put((my_cards, board, next_cards))
+
+    for _ in range(num_workers):
+        task_queue.put(None)
+
+    while len(active_children()) > 0:
+        time.sleep(.1)
+
+    losses = 0
+    wins = 0
+
+    while True:
+        try:
+            l, r = result_queue.get_nowait()
+            losses += l
+            wins += r
+
+        except Empty:
+            break
+
+    return losses, wins
+
 
 RANK_CLASS_TO_STRING = {
     0: "Royal",
@@ -569,23 +629,27 @@ def print_odds(cards, board, num_villains):
     if not board:
         odds = preflop_odds(cards)[num_villains+1]
     else:
-        odds = compute_odds(cards, board, num_villains)
+        odds = postflop_odds(cards, board, num_villains)
 
     lprint(f'win {odds:5.2f} ')
 
     return odds
 
 CACHE_ODDS = {}
-def compute_odds(cards, board, num_villains):
+def postflop_odds(cards, board, num_villains):
     key = ''.join(cards) + ''.join(board)
     if key in CACHE_ODDS:
-        odds = CACHE_ODDS[key]
+        losses, wins = CACHE_ODDS[key]
     else:
-        odds = CACHE_ODDS[key] = montecarlo_odds(cards, board, num_villains)
-    return odds
+        losses, wins = CACHE_ODDS[key] = simulate_all(cards, board)
+
+    losses *= num_villains
+    total = wins + losses
+
+    return round(100 * wins / total, 2)
 
 def print_mode():
-    print('Mode:', 'MANUAL' if MANUAL_MODE else 'AUTO')
+    print('Mode:', what_mode())
 
 def read_choice(should):
     s = getch.getch()
@@ -612,20 +676,13 @@ def read_choice(should):
         else:
             do_fold()
 
-        global MANUAL_MODE
-        if s == 'm':
-            MANUAL_MODE = not MANUAL_MODE
-            print_mode()
-
 def bet_or_check(win_odds, street):
-    if MANUAL_MODE:
+    if what_mode() == 'manual':
         return read_choice('check')
 
     if street == 'flop':
         if win_odds > 70:
             do_bet(2)
-        elif win_odds > 50:
-            do_bet(1)
         else:
             do_check()
 
@@ -634,8 +691,6 @@ def bet_or_check(win_odds, street):
             do_bet('HALF')
         elif win_odds > 70:
             do_bet(2)
-        elif win_odds >= 50:
-            do_bet(1)
         else:
             do_check()
 
@@ -645,33 +700,81 @@ def bet_or_check(win_odds, street):
         elif win_odds > 80:
             do_bet('HALF')
         elif win_odds > 70:
-            do_bet(2)
-        elif win_odds >= 50:
             do_bet(1)
         else:
             do_check()
     else:
         do_check()
 
-def call_or_fold(win_odds, street, image):
+def test_size(image, BIG_BLIND=50000):
+    if isinstance(image, str):
+        image = Image.open(image)
+
+    num_villains = len(read_villains(image))
+    board = read_board(image)
+
+    street = what_street(board)
+
+    call_ok = can_call(image)
+    if call_ok:
+        call_size = read_call(image)
+    else:
+        call_size = read_mystack(image)
+
+    pot_size = read_pot(image) or 0
+    print('pot:', pot_size)
+    bet_size = read_bet(image, XY_MY_BET) or 0
+    print('my bet:', bet_size)
+    if street == 'preflop' and bet_size == 0 and call_size == BIG_BLIND:
+        # assume everyone after me will limp -> lower pot odds
+        pot_size += num_villains * BIG_BLIND
+        pot_size += BIG_BLIND
+    else:
+        pot_size += bet_size
+        pot_size += call_size
+
+        # assume everyone after me will fold -> higher pot odds
+        villain_bets = tuple(size for size in read_bets(image).values() if size)
+
+        for size in villain_bets:
+            if size <= call_size:
+                pot_size += size
+            else:
+                pot_size += call_size
+
+    return pack_number(pot_size), pot_size
+
+def call_or_fold(win_odds, street, num_villains, image):
 
     if can_call(image):
         call_size = read_call(image)
     else:
         call_size = read_mystack(image)
 
-    villain_bets = read_bets(image)
-
     pot_size = read_pot(image) or 0
-    pot_size += sum(filter(None, villain_bets.values())) # assume everyone after me will fold -> higher pot odds
-    pot_size += read_bet(image, XY_MY_BET) or 0
-    pot_size += call_size
+    bet_size = read_bet(image, XY_MY_BET) or 0
+
+    if street == 'preflop' and bet_size == 0 and call_size == BIG_BLIND:
+        # assume everyone after me will limp -> lower pot odds
+        pot_size += num_villains * BIG_BLIND
+        pot_size += BIG_BLIND
+    else:
+        pot_size += bet_size
+        pot_size += call_size
+
+        # assume everyone after me will fold -> higher pot odds
+        villain_bets = tuple(size for size in read_bets(image).values() if size)
+
+        for size in villain_bets:
+            if size <= call_size:
+                pot_size += size
+            else:
+                pot_size += call_size
 
     pot_odds = threshold = 100 * call_size / pot_size
 
     if street != 'preflop':
-        num_villains = len(read_villains(image)) # assume everyone after me will call
-        threshold = max(pot_odds, 100/(num_villains+1))
+        threshold = max(pot_odds, 100/(num_villains+1)) # assume everyone after me will call
 
     call_size = pack_number(call_size)
     pot_size = pack_number(pot_size)
@@ -683,7 +786,7 @@ def call_or_fold(win_odds, street, image):
         should = 'fold'
         lprint(f'< {threshold:5.2f} {call_size}/{pot_size}, ')
 
-    if MANUAL_MODE:
+    if what_mode() == 'manual':
         return read_choice(should)
 
     if should == 'fold':
@@ -694,8 +797,15 @@ def call_or_fold(win_odds, street, image):
         else:
             do_call()
 
-def make_key(cards, board, image):
-    key = f'{cards},{board}'
+def what_mode():
+    with open('mode.txt') as f:
+        if f.read().lower().strip().startswith('auto'):
+            return 'auto'
+        else:
+            return 'manual'
+
+def make_key(cards, board, num_villains, image):
+    key = f'{cards},{board},{num_villains}'
     if not btns_disabled(image):
         _ = read_mystack(image)
         _ = read_pot(image)
@@ -715,8 +825,8 @@ SHOW_CACHE = []
 def loop():
     global IMAGE, BIG_BLIND, SHOW_CACHE
 
-    prev_cards = None
-    prev_board = None
+    prev_cards = []
+    prev_board = []
 
     while True:
         try:
@@ -737,26 +847,29 @@ def loop():
             BIG_BLIND = read_bigblind(image)
             num_villains = 0
             prev_cards = cards
+            prev_board = []
             print()
 
         if not BIG_BLIND:
             # waiting start of next round
             continue
 
-        if num_villains == 0:
-            num_villains = len(read_villains(image))
-            continue
-
         board = read_board(image)
-        if len(board) > 0 and len(board) < len(prev_board):
-            continue
-        prev_board = board
 
         street = what_street(board)
         if not street:
             continue
 
-        key = make_key(cards, board, image)
+        if board[:len(prev_board)] != prev_board:
+            # print(board, '!=', prev_board)
+            continue
+        prev_board = board
+
+        num_villains = len(read_villains(image))
+        if num_villains == 0:
+            continue
+
+        key = make_key(cards, board, num_villains, image)
         if key not in SHOW_CACHE:
             SHOW_CACHE.append(key)
             win_odds = print_odds(cards, board, num_villains)
@@ -767,7 +880,7 @@ def loop():
         if can_check(image):
             bet_or_check(win_odds, street)
         else:
-            call_or_fold(win_odds, street, image)
+            call_or_fold(win_odds, street, num_villains, image)
 
 def play():
     try:
@@ -776,12 +889,93 @@ def play():
     except KeyboardInterrupt:
         pass
 
-MANUAL_MODE = True
-
 if __name__ == '__main__':
     # test_perf()
     play()
 
+
+
+DAILYBLITZ_BOARD_VALUE1 = (585, 290, 585+40, 390)
+DAILYBLITZ_BOARD_VALUE2 = (802, 290, 802+40, 390)
+DAILYBLITZ_BOARD_VALUE3 = (1019, 290, 1019+40, 390)
+DAILYBLITZ_BOARD_VALUE4 = (1236, 290, 1236+40, 390)
+DAILYBLITZ_BOARD_VALUE5 = (1453, 290, 1453+40, 390)
+
+DAILYBLITZ_BOARD1_SUIT = (580, 400, 580+60, 400+80)
+DAILYBLITZ_BOARD2_SUIT = (795, 400, 795+60, 400+80)
+DAILYBLITZ_BOARD3_SUIT = (1015, 400, 1015+60, 400+80)
+DAILYBLITZ_BOARD4_SUIT = (1230, 400, 1230+60, 400+80)
+DAILYBLITZ_BOARD5_SUIT = (1450, 400, 1450+60, 400+80)
+
+DAILYBLITZ_LEFTCARD1_VALUE = (575, 645, 625, 740)
+DAILYBLITZ_LEFTCARD2_VALUE = (690, 635, 735, 730)
+
+DAILYBLITZ_RIGHTCARD1_VALUE = (1342, 635, 1390, 730)
+DAILYBLITZ_RIGHTCARD2_VALUE = (1480, 570, 1525, 665) # .rotate(10)
+
+DAILYBLITZ_LEFTCARD1_SUIT = ()
+
+DAILYBLITZ_BOARD_SUIT1 = ()
+
+def test__dailyblitz():
+    dirpath = './dailyblitz/'
+
+    for i, filename in enumerate(sorted(os.listdir(dirpath))):
+        filepath = os.path.join(dirpath, filename)
+        # image = Image.open(filepath)
+
+        s = read_dailyblitz(filepath)
+        print(s)
+
+        input()
+
+def read_dailyblitz(imagepath):
+    TEMPLATES_DAILYBLITZ_BOARD_VALUE = {}
+    for v in CARD_VALUES:
+        filepath = f'./cv/dailyblitz/board/{v}.png'
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_BOARD_VALUE[v] = tv
+
+    TEMPLATES_DAILYBLITZ_BOARD_SUIT = {}
+    for v in CARD_SUITS:
+        filepath = f'./cv/dailyblitz/board/{v}.png'
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_BOARD_SUIT[v] = tv
+
+    TEMPLATES_DAILYBLITZ_LEFTCARD1_VALUE = {}
+    for v in CARD_VALUES:
+        filepath = f'./cv/dailyblitz/leftcard1/{v}.png'
+        if not os.path.isfile(filepath):
+            continue
+        # print('register', v)
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_LEFTCARD1_VALUE[v] = tv
+
+    TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE = {}
+    for v in CARD_VALUES:
+        filepath = f'./cv/dailyblitz/leftcard2/{v}.png'
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE[v] = tv
+
+    image = Image.open(imagepath)
+
+    l1_v = match_symbol(image, DAILYBLITZ_LEFTCARD1_VALUE, TEMPLATES_DAILYBLITZ_LEFTCARD1_VALUE)
+    l2_v = match_symbol(image, DAILYBLITZ_LEFTCARD2_VALUE, TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE)
+    r1_v = match_symbol(image, DAILYBLITZ_RIGHTCARD1_VALUE, TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE)
+    r2_v = match_symbol(image.rotate(10), DAILYBLITZ_RIGHTCARD2_VALUE, TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE)
+
+    # b_v1 = match_symbol(image, DAILYBLITZ_BOARD_VALUE1, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+    # b_v2 = match_symbol(image, DAILYBLITZ_BOARD_VALUE2, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+    # b_v3 = match_symbol(image, DAILYBLITZ_BOARD_VALUE3, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+    # b_v4 = match_symbol(image, DAILYBLITZ_BOARD_VALUE4, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+    # b_v5 = match_symbol(image, DAILYBLITZ_BOARD_VALUE5, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+
+    # b_s1 = match_symbol(image, DAILYBLITZ_BOARD1_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+    # b_s2 = match_symbol(image, DAILYBLITZ_BOARD2_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+    # b_s3 = match_symbol(image, DAILYBLITZ_BOARD3_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+    # b_s4 = match_symbol(image, DAILYBLITZ_BOARD4_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+    # b_s5 = match_symbol(image, DAILYBLITZ_BOARD5_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+    return l1_v+l2_v, r1_v+r2_v
 
 # TESTS TESTS TESTS
 
@@ -813,12 +1007,12 @@ def test_perf():
     print('avg: %.2f' %  (sum(stats)/len(stats)))
     return stats, filemap
 
-EXPECTED_CALL = [30000, 40000, 80000, 50000, 5000, 10000, 40000, 27260, 50450, 15700, 190000, 255000, 258230, 35000, 250000, 110000, 181830, 90000, 507000, 25000, 267850, 200000, 650000, 6160000, 100000, 1500000, 1000000, 200000, 600000, 600000, 500000, None, 50000, 30000]
-EXPECTED_MYSTACK = [160450, 125000, 85000, 75000, 60000, 55000, 45000, 424750, 417736, 367286, 349650, 286334, 813884, 1100000, 656930, 1100000, 1000000, 157169, 4800000, 2000000, 1300000, 3700000, 2900000, 7100000, 5100000, 3900000, 1500000, 6300000, 13800000, 4400000, 3700000, 220000, 200000, 200000]
-EXPECTED_POT = [50000, 40000, 160000, 40000, None, None, None, 25000, 30000, 130900, None, None, None, None, 450000, 120000, 40000, 180000, None, None, None, None, None, 750000, None, None, 5100000, None, 650000, 400000, 1700000, 40000, None, None]
-EXPECTED_BET = [None, None, None, None, 5000, None, 10000, None, None, None, 10000, 5000, 45000, 45000, None, None, None, None, 50000, 25000, 650000, None, 850000, None, 100000, 100000, None, 200000, None, 50000, 50000, None, 10000, None]
-EXPECTED_BETS_SUM = [30000, 80000, 160000, 100000, 30000, 15000, 100000, 27260, 50450, 15700, 356730, 300000, 363230, 170000, 250000, 110000, 181830, 90000, 682000, 150000, 1755350, 325000, 3690000, 6160000, 800000, 2000000, 1000000, 900000, 600000, 650000, 550000, 0, 140000, 45000]
-EXPECTED_VILLAIN = [3, 2, 2, 2, 3, 2, 2, 1, 2, 1, 2, 3, 2, 2, 1, 1, 1, 3, 3, 3, 2, 5, 3, 2, 4, 3, 1, 2, 1, 1, 1, 3, 4, 3]
+EXPECTED_CALL = [30000, 40000, 80000, 50000, 5000, 10000, 40000, 27260, 50450, 15700, 190000, 255000, 258230, 35000, 250000, 110000, 181830, 90000, 507000, 25000, 267850, 200000, 650000, 6160000, 100000, 1500000, 1000000, 200000, 600000, 600000, 500000, None, 50000, 30000, 100000]
+EXPECTED_MYSTACK = [160450, 125000, 85000, 75000, 60000, 55000, 45000, 424750, 417736, 367286, 349650, 286334, 813884, 1100000, 656930, 1100000, 1000000, 157169, 4800000, 2000000, 1300000, 3700000, 2900000, 7100000, 5100000, 3900000, 1500000, 6300000, 13800000, 4400000, 3700000, 220000, 200000, 200000, 4500000]
+EXPECTED_POT = [50000, 40000, 160000, 40000, None, None, None, 25000, 30000, 130900, None, None, None, None, 450000, 120000, 40000, 180000, None, None, None, None, None, 750000, None, None, 5100000, None, 650000, 400000, 1700000, 40000, None, None, 300000]
+EXPECTED_BET = [None, None, None, None, 5000, None, 10000, None, None, None, 10000, 5000, 45000, 45000, None, None, None, None, 50000, 25000, 650000, None, 850000, None, 100000, 100000, None, 200000, None, 50000, 50000, None, 10000, None, None]
+EXPECTED_BETS_SUM = [30000, 80000, 160000, 100000, 30000, 15000, 100000, 27260, 50450, 15700, 356730, 300000, 363230, 170000, 250000, 110000, 181830, 90000, 682000, 150000, 1755350, 325000, 3690000, 6160000, 800000, 2000000, 1000000, 900000, 600000, 650000, 550000, 0, 140000, 45000, 250000]
+EXPECTED_VILLAIN = [3, 2, 2, 2, 3, 2, 2, 1, 2, 1, 2, 3, 2, 2, 1, 1, 1, 3, 3, 3, 2, 5, 3, 2, 4, 3, 1, 2, 1, 1, 1, 3, 4, 3, 4]
 
 def test_ocr():
     dirpath = './tests/screencaps'
