@@ -1,5 +1,5 @@
 pillow
 treys
 numpy
-tesserocr
-getch
+msvcrt
+colorama

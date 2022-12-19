@@ -16,11 +16,12 @@ from tesserocr import image_to_text
 from treys import Card
 from treys import Evaluator
 
-
 IS_WINDOWS = 'Win' in system()
 
 if IS_WINDOWS:
     from msvcrt import getch as getch
+    from colorama import just_fix_windows_console
+    just_fix_windows_console() # colorama >= 0.4.6 required
 else:
     from getch import getch as getch
 
@@ -60,10 +61,11 @@ SPADE = "\u2660"
 HEART = "\u2665"
 DIAMOND = "\u2666"
 CLUB = "\u2663"
-RED = "\x1b[91m"
-MAGENTA = "\x1b[95m"
-BLUE = "\x1b[94m"
-RESET = "\x1b[0m"
+
+RED = "\033[31m"
+MAGENTA = "\033[35m"
+BLUE = "\033[34m"
+RESET = "\033[0m"
 
 def color_cards(cards):
     colored = []
@@ -514,38 +516,7 @@ def preflop_odds(cards):
     return PREFLOP_ODDS[s]
 
 VALID_CARDS = [x + y for x in CARD_VALUES for y in CARD_SUITS]
-FULL_DECK = [Card.new(c) for c in VALID_CARDS]
-
-def simulate_board(task_queue, result_queue):
-    evaluator = Evaluator()
-
-    while True:
-        data = task_queue.get()
-        if data is None:
-            result_queue.put(None)
-            return
-
-        my_cards, board, next_cards = data
-
-        full_board = board + next_cards
-        my_score = evaluator.evaluate(full_board, my_cards)
-
-        deck = FULL_DECK[:]
-        for c in my_cards + full_board:
-            deck.remove(c)
-
-        losses = 0
-        wins = 0
-
-        for their_cards in itertools.combinations(deck, 2):
-            their_score = evaluator.evaluate(full_board, their_cards)
-
-            if my_score > their_score:
-                losses += 1
-            else:
-                wins += 1 # win or tie
-
-        result_queue.put((losses, wins))
+# FULL_DECK = [Card.new(c) for c in VALID_CARDS]
 
 def simulate_all(my_cards, board):
     '''
@@ -554,41 +525,14 @@ def simulate_all(my_cards, board):
     number of possible 5-card combinations given 50-card deck (aka boards): 2118760
     number of possible 2-card combinations given 45-card deck (aka their holecards): 990
     '''
-    board = tuple(Card.new(c) for c in board)
-    my_cards = tuple(Card.new(c) for c in my_cards)
-
-    deck = FULL_DECK[:]
-    for c in my_cards + board:
-        deck.remove(c)
-
-    task_queue = Queue()
-    result_queue = Queue()
-
-    num_workers = cpu_count()
-
-    for _ in range(num_workers):
-        p = Process(target=simulate_board, args=(task_queue, result_queue))
-        p.start()
-
-    for next_cards in itertools.combinations(deck, 5 - len(board)):
-        task_queue.put((my_cards, board, next_cards))
-
-    for _ in range(num_workers):
-        task_queue.put(None)
-
-    losses = 0
-    wins = 0
-
-    while num_workers > 0:
-        result = result_queue.get()
-        if result is None:
-            num_workers -= 1
-            continue
-
-        l, r = result
-        losses += l
-        wins += r
-
+    if IS_WINDOWS:
+        cmd = 'calc-odds/calc-odds.exe'
+    else:
+        cmd = 'calc-odds/calc-odds'
+    cmd += ' ' + ' '.join(my_cards) + ' ' + ' '.join(board)
+    out = subprocess.check_output(cmd.split())
+    losses, wins = out.split()
+    losses, wins = int(losses), int(wins)
     return losses, wins
 
 
