@@ -32,7 +32,7 @@ def train_mycards(d='/home/seb/screencaps-pixel'):
             v = v.upper()
             if v in CARD_VALUES:
                 break
-        subprocess.Popen(['killall', 'geeqie'])      
+        subprocess.Popen(['killall', 'geeqie'])
 
         if not v:
             continue
@@ -59,7 +59,7 @@ def train_board(d='/home/seb/screencaps-all/'):
                 if v in CARD_VALUES:
                     break
             subprocess.Popen(['killall', 'geeqie'])
-            
+
             if not v:
                 continue
             t = '/home/seb/cv/%s.png' % v

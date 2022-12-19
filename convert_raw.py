@@ -10,7 +10,7 @@ def convert(filepath):
     image.save(filepath.replace('raw', 'png'))
     os.unlink(filepath)
 
-d = '../../screencaps-auto'
+d = './screencaps-auto'
 while True:
     for filename in sorted(os.listdir(d)):
         if not filename.endswith('.raw'):

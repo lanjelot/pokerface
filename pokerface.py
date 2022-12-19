@@ -5,17 +5,24 @@ import random
 import re
 import ast
 from hashlib import md5
-from PIL import Image
 import itertools
 from multiprocessing import Queue, Process, active_children, cpu_count
 from queue import Empty
-
-import getch
+from platform import system
+from PIL import Image
 import numpy
 import cv2
 from tesserocr import image_to_text
 from treys import Card
 from treys import Evaluator
+
+
+IS_WINDOWS = 'Win' in system()
+
+if IS_WINDOWS:
+    from msvcrt import getch as getch
+else:
+    from getch import getch as getch
 
 
 class Timing:
@@ -25,6 +32,12 @@ class Timing:
 
   def __exit__(self, exc_type, exc_value, traceback):
     self.time = time.time() - self.t1
+
+def _B(s):
+    if isinstance(s, bytes):
+        return s.decode()
+    else:
+        return s
 
 def chunk(s, bs):
   return [s[i:i + bs] for i in range(0, len(s), bs)]
@@ -37,7 +50,7 @@ def hash_image(image):
 
 def save_image(image):
     # takes 1 second for a .png extension, so we save as raw and convert later
-    filepath = '/home/moi/screencaps-auto/%d.raw' % time.time()
+    filepath = './screencaps-auto/%d.raw' % time.time()
     if os.path.isfile(filepath):
         return
     with open(filepath, 'wb') as f:
@@ -460,13 +473,13 @@ def can_call(image):
     return not can_check(image) and not btn2_disabled(image)
 
 def can_check(image):
-    return hash_image(image.crop((1440, 985, 1585, 1040))) == '5590b09a2a4c65a1e57aeb7a1d38d6b2'
+    return hash_image(image.crop((1440, 985, 1585, 1040))) == '65baa16cf2e479f0a32be6c267c44af6' #'5590b09a2a4c65a1e57aeb7a1d38d6b2'
 
 def btn2_disabled(image):
-    return hash_image(image.crop((1440, 985, 1585, 1040))) == '92653fa84141bd525b8e50c94d868abd'
+    return hash_image(image.crop((1440, 985, 1585, 1040))) == 'a3cccd822e34d313ef1f67b22d12155e' # '92653fa84141bd525b8e50c94d868abd'
 
 def btns_disabled(image):
-    return hash_image(image.crop((900, 985, 2100, 1040))) == '1dda2358e9ddbba55aa5f6742bf7dc82'
+    return hash_image(image.crop((900, 985, 2100, 1040))) == 'dc81641bed9926409fc59313859c7772' # '1dda2358e9ddbba55aa5f6742bf7dc82'
 
 def read_button2(image):
     if can_check(image):
@@ -507,13 +520,9 @@ def simulate_board(task_queue, result_queue):
     evaluator = Evaluator()
 
     while True:
-        try:
-            data = task_queue.get_nowait()
-        except Empty:
-            time.sleep(.1)
-            continue
-
+        data = task_queue.get()
         if data is None:
+            result_queue.put(None)
             return
 
         my_cards, board, next_cards = data
@@ -543,9 +552,8 @@ def simulate_all(my_cards, board):
     number of possible 2-card combinations given 52-card deck (aka holecards): 1326
     number of possible 3-card combinations given 50-card deck (aka flop): 16215
     number of possible 5-card combinations given 50-card deck (aka boards): 2118760
-    number of possible 2-card combinations given 45-card deck: 990
+    number of possible 2-card combinations given 45-card deck (aka their holecards): 990
     '''
-
     board = tuple(Card.new(c) for c in board)
     my_cards = tuple(Card.new(c) for c in my_cards)
 
@@ -560,7 +568,6 @@ def simulate_all(my_cards, board):
 
     for _ in range(num_workers):
         p = Process(target=simulate_board, args=(task_queue, result_queue))
-        # p.daemon = True
         p.start()
 
     for next_cards in itertools.combinations(deck, 5 - len(board)):
@@ -569,20 +576,18 @@ def simulate_all(my_cards, board):
     for _ in range(num_workers):
         task_queue.put(None)
 
-    while len(active_children()) > 0:
-        time.sleep(.1)
-
     losses = 0
     wins = 0
 
-    while True:
-        try:
-            l, r = result_queue.get_nowait()
-            losses += l
-            wins += r
+    while num_workers > 0:
+        result = result_queue.get()
+        if result is None:
+            num_workers -= 1
+            continue
 
-        except Empty:
-            break
+        l, r = result
+        losses += l
+        wins += r
 
     return losses, wins
 
@@ -652,7 +657,7 @@ def print_mode():
     print('Mode:', what_mode())
 
 def read_choice(should):
-    s = getch.getch()
+    s = _B(getch())
     if s.isnumeric():
         do_bet(int(s))
     elif s == 'a':
@@ -821,7 +826,10 @@ def make_key(cards, board, num_villains, image):
 
     return key
 
+IMAGE = None
+BIG_BLIND = None
 SHOW_CACHE = []
+
 def loop():
     global IMAGE, BIG_BLIND, SHOW_CACHE
 
