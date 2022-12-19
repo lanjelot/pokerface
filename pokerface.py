@@ -5,9 +5,6 @@ import random
 import re
 import ast
 from hashlib import md5
-import itertools
-from multiprocessing import Queue, Process, active_children, cpu_count
-from queue import Empty
 from platform import system
 from PIL import Image
 import numpy
@@ -57,15 +54,16 @@ def save_image(image):
     with open(filepath, 'wb') as f:
         f.write(image.tobytes())
 
-SPADE = "\u2660"
-HEART = "\u2665"
-DIAMOND = "\u2666"
-CLUB = "\u2663"
 
-RED = "\033[31m"
-MAGENTA = "\033[35m"
-BLUE = "\033[34m"
-RESET = "\033[0m"
+SPADE = '\u2660'
+HEART = '\u2665'
+DIAMOND = '\u2666'
+CLUB = '\u2663'
+
+RED = '\033[91m'
+MAGENTA = '\033[95m'
+BLUE = '\033[94m'
+RESET = '\033[0m'
 
 def color_cards(cards):
     colored = []
@@ -81,8 +79,8 @@ def color_cards(cards):
             colored.append(MAGENTA + value + DIAMOND + RESET)
     return ' '.join(colored)
 
-CARD_VALUES = "23456789TJQKA"
-CARD_SUITS = "shdc"
+CARD_VALUES = '23456789TJQKA'
+CARD_SUITS = 'shdc'
 
 TEMPLATES_MYCARD1_VALUE = {}
 for v in CARD_VALUES:
@@ -131,6 +129,7 @@ REGION_BOARD3_SUIT = (1050, 470, 1095, 520)
 REGION_BOARD4_SUIT = (1175, 470, 1210, 520)
 REGION_BOARD5_SUIT = (1295, 470, 1330, 520)
 
+
 CACHE_SYMBOL = {}
 def match_symbol(image, region, templates):
     image = image.crop(region)
@@ -161,6 +160,7 @@ def match_symbol(image, region, templates):
 
     return best_match
 
+
 def read_mycards(image):
     v1 = match_symbol(image, REGION_MYCARD1_VALUE, TEMPLATES_MYCARD1_VALUE)
     v2 = match_symbol(image, REGION_MYCARD2_VALUE, TEMPLATES_MYCARD2_VALUE)
@@ -169,6 +169,7 @@ def read_mycards(image):
     s2 = match_symbol(image, REGION_MYCARD2_SUIT, TEMPLATES_MYCARD2_SUITS)
 
     return [v1+s1, v2+s2]
+
 
 def read_board(image):
     v1 = match_symbol(image, REGION_BOARD1_VALUE, TEMPLATES_BOARD_VALUE)
@@ -186,6 +187,7 @@ def read_board(image):
     board = v1+s1, v2+s2, v3+s3, v4+s4, v5+s5
     return [c for c in board if c in VALID_CARDS]
 
+
 def unpack_number(s):
     s = s.upper()
     f = float(s[:-1])
@@ -197,6 +199,7 @@ def unpack_number(s):
         f *= 1000000000
     return int(f)
 
+
 def pack_number(num):
     num = float('{:.3g}'.format(num))
     magnitude = 0
@@ -204,6 +207,7 @@ def pack_number(num):
         magnitude += 1
         num /= 1000.0
     return '{}{}'.format('{:f}'.format(num).rstrip('0').rstrip('.'), ['', 'K', 'M', 'B', 'T'][magnitude])
+
 
 CACHE_NUMBER = {}
 def read_number(image, region):
@@ -235,6 +239,7 @@ def read_number(image, region):
         CACHE_NUMBER[h] = n
     return n
 
+
 def read_pot(image):
     sx, sy = 1020, 590
     if image.getpixel((sx, sy)) != (0, 0, 0, 255):
@@ -258,6 +263,7 @@ def read_pot(image):
                 y2 = max(y2, y)
 
     return read_number(image, (x1-5, y1-5, x2+5, y2+6))
+
 
 XY_MY_BET = (1070, 655)
 XY_VILLAIN_BET = [
@@ -295,6 +301,7 @@ def read_bet(image, xy=XY_MY_BET):
 
     return read_number(image, (x1-5, y1-5, x2+5, y2+6))
 
+
 def read_bets(image):
     bets = {}
     for i, xy in enumerate(XY_VILLAIN_BET):
@@ -302,6 +309,7 @@ def read_bets(image):
         bets[i] = n
 
     return bets
+
 
 def read_call(image):
     x1, y1 = 1710, 1045
@@ -323,6 +331,7 @@ def read_call(image):
         if n is not None:
             return n
 
+
 def read_mystack(image):
     if image.getpixel((730, 940))[1:3] == (0, 0):
         sx1, sy1, sx2, sy2 = 770, 912, 950, 945 # cash game
@@ -334,6 +343,7 @@ def read_mystack(image):
             break
     return n
 
+
 REGION_BUTTON3 = (1735, 960, 2145, 1059)
 TEMPLATES_BUTTON3 = {}
 for v in ['bet', 'raise', 'allin', 'callany']:
@@ -342,6 +352,7 @@ for v in ['bet', 'raise', 'allin', 'callany']:
 
 def read_button3(image):
     return match_symbol(image, REGION_BUTTON3, TEMPLATES_BUTTON3)
+
 
 # clockwise starting from my left
 XY_VILLAIN_BB = [
@@ -361,6 +372,7 @@ def read_bigblind(image):
             return read_bet(image, XY_VILLAIN_BET[i])
     else:
         return read_bet(image, XY_MY_BET)
+
 
 # clockwise starting from my left
 XY_VILLAIN_CARDS = [
@@ -390,6 +402,7 @@ def read_villains(image):
 
     return villains
 
+
 XY_FOLD = (1000, 1000) # FOLD
 XY_CALL = (1500, 1000) # CHECK, CALL
 XY_BET = (2000, 1000) # BET, RAISE, ALL IN
@@ -403,12 +416,15 @@ def tap(xy):
     _ = subprocess.check_output(['adb', 'shell', 'input', 'tap', x, y])
     time.sleep(.25)
 
+
 def lprint(s):
     print(s, end='', flush=True)
+
 
 def do_check():
     lprint('Check')
     tap(XY_CALL)
+
 
 def do_call():
     if not can_call(IMAGE):
@@ -418,9 +434,11 @@ def do_call():
         lprint('Call')
         tap(XY_CALL)
 
+
 def do_fold():
     lprint('Fold')
     tap(XY_FOLD)
+
 
 def do_bet(size=0):
     lprint('Bet ')
@@ -445,6 +463,7 @@ def do_bet(size=0):
 
     tap(XY_BET)
 
+
 def can_act(image):
     # one of three buttons already clicked
     if image.getpixel((1325, 1010))[0] > 200 or \
@@ -458,6 +477,7 @@ def can_act(image):
         return True
 
     return False
+
 
 def can_bet(image):
     return read_button3(image) == 'bet'
@@ -483,6 +503,7 @@ def btn2_disabled(image):
 def btns_disabled(image):
     return hash_image(image.crop((900, 985, 2100, 1040))) == 'dc81641bed9926409fc59313859c7772' # '1dda2358e9ddbba55aa5f6742bf7dc82'
 
+
 def read_button2(image):
     if can_check(image):
         return 'check'
@@ -490,6 +511,7 @@ def read_button2(image):
         return 'call'
     else:
         return 'only all in'
+
 
 def what_street(board):
     if len(board) == 0:
@@ -502,7 +524,8 @@ def what_street(board):
         return 'river'
     return None
 
-with open("preflop-odds.txt","r") as f:
+
+with open('preflop-odds.txt', 'r') as f:
     PREFLOP_ODDS = ast.literal_eval(f.read())
 
 def preflop_odds(cards):
@@ -515,10 +538,12 @@ def preflop_odds(cards):
         s += 'o'
     return PREFLOP_ODDS[s]
 
+
 VALID_CARDS = [x + y for x in CARD_VALUES for y in CARD_SUITS]
 # FULL_DECK = [Card.new(c) for c in VALID_CARDS]
 
-def simulate_all(my_cards, board):
+
+def calc_odds(my_cards, board):
     '''
     number of possible 2-card combinations given 52-card deck (aka holecards): 1326
     number of possible 3-card combinations given 50-card deck (aka flop): 16215
@@ -537,17 +562,18 @@ def simulate_all(my_cards, board):
 
 
 RANK_CLASS_TO_STRING = {
-    0: "Royal",
-    1: "St Fl",
-    2: "Four",
-    3: "Full",
-    4: "Flush",
-    5: "Strai",
-    6: "Three",
-    7: "Two P",
-    8: "Pair",
-    9: "High"
+    0: 'Royal',
+    1: 'St Fl',
+    2: 'Four',
+    3: 'Full',
+    4: 'Flush',
+    5: 'Strai',
+    6: 'Three',
+    7: 'Two P',
+    8: 'Pair',
+    9: 'High'
 }
+
 
 def print_odds(cards, board, num_villains):
     print()
@@ -584,21 +610,24 @@ def print_odds(cards, board, num_villains):
 
     return odds
 
+
 CACHE_ODDS = {}
 def postflop_odds(cards, board, num_villains):
     key = ''.join(cards) + ''.join(board)
     if key in CACHE_ODDS:
         losses, wins = CACHE_ODDS[key]
     else:
-        losses, wins = CACHE_ODDS[key] = simulate_all(cards, board)
+        losses, wins = CACHE_ODDS[key] = calc_odds(cards, board)
 
     losses *= num_villains
     total = wins + losses
 
     return round(100 * wins / total, 2)
 
+
 def print_mode():
     print('Mode:', what_mode())
+
 
 def read_choice(should):
     s = _B(getch())
@@ -624,6 +653,7 @@ def read_choice(should):
             do_call()
         else:
             do_fold()
+
 
 def bet_or_check(win_odds, street):
     if what_mode() == 'manual':
@@ -655,43 +685,6 @@ def bet_or_check(win_odds, street):
     else:
         do_check()
 
-def test_size(image, BIG_BLIND=50000):
-    if isinstance(image, str):
-        image = Image.open(image)
-
-    num_villains = len(read_villains(image))
-    board = read_board(image)
-
-    street = what_street(board)
-
-    call_ok = can_call(image)
-    if call_ok:
-        call_size = read_call(image)
-    else:
-        call_size = read_mystack(image)
-
-    pot_size = read_pot(image) or 0
-    print('pot:', pot_size)
-    bet_size = read_bet(image, XY_MY_BET) or 0
-    print('my bet:', bet_size)
-    if street == 'preflop' and bet_size == 0 and call_size == BIG_BLIND:
-        # assume everyone after me will limp -> lower pot odds
-        pot_size += num_villains * BIG_BLIND
-        pot_size += BIG_BLIND
-    else:
-        pot_size += bet_size
-        pot_size += call_size
-
-        # assume everyone after me will fold -> higher pot odds
-        villain_bets = tuple(size for size in read_bets(image).values() if size)
-
-        for size in villain_bets:
-            if size <= call_size:
-                pot_size += size
-            else:
-                pot_size += call_size
-
-    return pack_number(pot_size), pot_size
 
 def call_or_fold(win_odds, street, num_villains, image):
 
@@ -746,12 +739,14 @@ def call_or_fold(win_odds, street, num_villains, image):
         else:
             do_call()
 
+
 def what_mode():
     with open('mode.txt') as f:
         if f.read().lower().strip().startswith('auto'):
             return 'auto'
         else:
             return 'manual'
+
 
 def make_key(cards, board, num_villains, image):
     key = f'{cards},{board},{num_villains}'
@@ -770,9 +765,11 @@ def make_key(cards, board, num_villains, image):
 
     return key
 
+
 IMAGE = None
 BIG_BLIND = None
 SHOW_CACHE = []
+
 
 def loop():
     global IMAGE, BIG_BLIND, SHOW_CACHE
@@ -834,12 +831,14 @@ def loop():
         else:
             call_or_fold(win_odds, street, num_villains, image)
 
+
 def play():
     try:
         print_mode()
         loop()
     except KeyboardInterrupt:
         pass
+
 
 if __name__ == '__main__':
     # test_perf()

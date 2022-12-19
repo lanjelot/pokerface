@@ -16,17 +16,17 @@ var (
 type Card = poker.Card
 
 func makeDeck(exclude []Card) []Card {
-	var cards []Card
-
+	cards := make([]Card, 52 - len(exclude))
+	i := 0
 	for _, rank := range strRanks {
 		for _, suit := range strSuits {
 			card := poker.NewCard(string(rank)+string(suit))
 			if containsCard(exclude, card) == false {
-				cards = append(cards, card)
+				cards[i] = card
+				i += 1
 			}				
 		}
 	}
-
 	return cards
 }
 
@@ -37,7 +37,6 @@ func containsCard(cards []Card, card Card) bool {
 		}
 	}
 	return false
-	
 }
 
 func removeCards(deck []Card, cards []Card) []Card {
