@@ -326,7 +326,7 @@ def read_call(image):
     # for i in range(6):
     #     for j in range(6):
     #         print('ij: (%d, %d)' % (i, j))
-    for i, j in [(0, 0), (0, 1), (0, 2), (0, 5), (0, 3), (1, 0), (1, 5)]:
+    for i, j in [(0, 0), (0, 1), (0, 2), (0, 5), (0, 3), (1, 0), (1, 5), (0, 4)]:
         n = read_number(image, (x1-4-i, y1-5-j, x2+4+i, y2+5+j))
         if n is not None:
             return n
@@ -760,7 +760,7 @@ def make_key(cards, board, num_villains, image):
         cash = sum(filter(None, read_bets(image).values()))
         cash += read_bet(image, XY_MY_BET) or 0
         if can_call(image):
-            cash += read_call(image)
+            cash += read_call(image) #or 0 # TODO mystack?
         key += f',{cash}'
 
     return key
@@ -931,9 +931,10 @@ def read_dailyblitz(imagepath):
 # TESTS TESTS TESTS
 
 def test_perf():
-    dirpath = '/home/seb/screencaps-auto'
+    dirpath = 'screencaps-auto'
     stats = []
     filemap = {}
+    calls = []
     for i, filename in enumerate(sorted(os.listdir(dirpath))):
         filepath = os.path.join(dirpath, filename)
         image = Image.open(filepath)
@@ -948,15 +949,18 @@ def test_perf():
                 continue
             n = read_call(image)
             if n is None:
+                print('read_call fail')
                 break
+            calls.append(n)
 
+    return calls
         # print(filepath, '%.2f' % timing.time)
-        filemap[filepath] = timing.time
-        stats.append(timing.time)
-    print('max: %.2f' %  max(stats))
-    print('min: %.2f' %  min(stats))
-    print('avg: %.2f' %  (sum(stats)/len(stats)))
-    return stats, filemap
+    #     filemap[filepath] = timing.time
+    #     stats.append(timing.time)
+    # print('max: %.2f' %  max(stats))
+    # print('min: %.2f' %  min(stats))
+    # print('avg: %.2f' %  (sum(stats)/len(stats)))
+    # return stats, filemap
 
 EXPECTED_CALL = [30000, 40000, 80000, 50000, 5000, 10000, 40000, 27260, 50450, 15700, 190000, 255000, 258230, 35000, 250000, 110000, 181830, 90000, 507000, 25000, 267850, 200000, 650000, 6160000, 100000, 1500000, 1000000, 200000, 600000, 600000, 500000, None, 50000, 30000, 100000, 2500000]
 EXPECTED_MYSTACK = [160450, 125000, 85000, 75000, 60000, 55000, 45000, 424750, 417736, 367286, 349650, 286334, 813884, 1100000, 656930, 1100000, 1000000, 157169, 4800000, 2000000, 1300000, 3700000, 2900000, 7100000, 5100000, 3900000, 1500000, 6300000, 13800000, 4400000, 3700000, 220000, 200000, 200000, 4500000, 42900000]
