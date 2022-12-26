@@ -46,9 +46,11 @@ def fake_sleep(max_secs=3):
 def hash_image(image):
     return md5(image.tobytes()).hexdigest()
 
-def save_image(image):
+def save_image(image, dirname='screencaps-auto'):
+    os.makedirs(dirname, exist_ok=True)
+
     # takes 1 second for a .png extension, so we save as raw and convert later
-    filepath = './screencaps-auto/%d.raw' % time.time()
+    filepath = os.path.join(dirname, '%d.raw' % time.time())
     if os.path.isfile(filepath):
         return
     with open(filepath, 'wb') as f:
@@ -136,8 +138,8 @@ def match_symbol(image, region, templates):
     # image.save('/tmp/needle.png')
 
     h = hash_image(image)
-    if h in CACHE_SYMBOL:
-        return CACHE_SYMBOL[h]
+    # if h in CACHE_SYMBOL:
+    #     return CACHE_SYMBOL[h]
 
     image_gray = cv2.cvtColor(numpy.array(image), cv2.COLOR_BGR2GRAY)
     best_score = 0
@@ -845,6 +847,130 @@ if __name__ == '__main__':
     play()
 
 
+###
+###
+### DAILYBLITZ ###
+
+XY_DB_LEFT = (700, 750)
+XY_DB_RIGHT = (1450, 750)
+
+def reload_db():
+    pass
+
+def save_v(subdir, value, image):
+    filepath = os.path.join('cv/dailyblitz/', subdir, f'{value}.png')
+
+    with open(filepath, 'wb') as f:
+        f.write(image.tobytes())
+
+
+def fix_invalid(left, right, image):
+    if '?' in left[0]:
+        l1 = input('left 1:').strip().upper()
+        save_v('leftcard1', l1, image.crop(DAILYBLITZ_LEFTCARD1_VALUE))
+
+    if '?' in left[1]:
+        l2 = input('left 2:').strip().upper()
+        save_v('leftcard2', l2, image.crop(DAILYBLITZ_LEFTCARD2_VALUE))
+
+    if '?' in right[0]:
+        r1 = input('right 1:').strip().upper()
+        save_v('rightcard1', r1, image.crop(DAILYBLITZ_RIGHTCARD1_VALUE))
+
+    if '?' in right[1]:
+        r2 = input('right 2:').strip().upper()
+        save_v('rightcard2', r2, image.crop(DAILYBLITZ_RIGHTCARD2_VALUE))
+
+
+
+def play_dailyblitz():
+    prev = None
+
+    while True:
+        try:
+            out = subprocess.check_output(['adb', 'exec-out', 'screencap'], timeout=1)
+        except subprocess.TimeoutExpired:
+            continue
+        try:
+            image = Image.frombytes('RGBA', (2340, 1080), out[16:])
+        except ValueError:
+            continue
+
+        board, left, right = read_dailyblitz(image)
+
+        if not all(c in VALID_CARDS for c in board):
+            continue
+
+        if not all(c in VALID_CARDS for c in left+right):
+            save_image(image, 'screencaps-db-fail')
+            fix_invalid(left, right, image)
+            continue
+
+        if board == prev:
+            continue
+
+        prev = board
+        save_image(image, 'screencaps-db')
+
+        left_wins = print_dailyblitz(board, left, right)
+        if left_wins:
+            tap(XY_DB_LEFT)
+        else:
+            tap(XY_DB_RIGHT)
+
+
+def print_dailyblitz(board, left, right):
+
+    left_cards = [Card.new(c) for c in left]
+    right_cards = [Card.new(c) for c in right]
+    board_cards = [Card.new(c) for c in board]
+
+    evaluator = Evaluator()
+    class_left = evaluator.get_rank_class(
+        evaluator.evaluate(
+            left_cards,
+            board_cards))
+    class_right = evaluator.get_rank_class(
+        evaluator.evaluate(
+            right_cards,
+            board_cards))
+    rank_left = RANK_CLASS_TO_STRING[class_left]
+    rank_right = RANK_CLASS_TO_STRING[class_right]
+
+    score_left = evaluator.evaluate(board_cards, left_cards)
+    score_right = evaluator.evaluate(board_cards, right_cards)
+
+    s = color_cards(left) + ' ' + rank_left + ' ' + str(score_left)
+    if score_left < score_right:
+        s += ' *'
+    print(s)
+
+    s = color_cards(right) + ' ' + rank_right + ' ' + str(score_right)
+    if score_right < score_left:
+        s += ' *'
+    print(s)
+
+    s = color_cards(board)
+    print(s)
+    print()
+
+    return score_left < score_right
+
+
+def test__dailyblitz():
+    dirpath = './dailyblitz/'
+
+    for i, filename in enumerate(sorted(os.listdir(dirpath))):
+        filepath = os.path.join(dirpath, filename)
+        print(filepath)
+        image = Image.open(filepath)
+
+        board, left, right = read_dailyblitz(image)
+
+        if not all(c in VALID_CARDS for c in board+left+right):
+            input()
+
+        print_dailyblitz(board, left, right)
 
 DAILYBLITZ_BOARD_VALUE1 = (585, 290, 585+40, 390)
 DAILYBLITZ_BOARD_VALUE2 = (802, 290, 802+40, 390)
@@ -861,26 +987,23 @@ DAILYBLITZ_BOARD5_SUIT = (1450, 400, 1450+60, 400+80)
 DAILYBLITZ_LEFTCARD1_VALUE = (575, 645, 625, 740)
 DAILYBLITZ_LEFTCARD2_VALUE = (690, 635, 735, 730)
 
-DAILYBLITZ_RIGHTCARD1_VALUE = (1342, 635, 1390, 730)
-DAILYBLITZ_RIGHTCARD2_VALUE = (1480, 570, 1525, 665) # .rotate(10)
+DAILYBLITZ_LEFTCARD1_SUIT = (595, 755, 645, 825)
+DAILYBLITZ_LEFTCARD2_SUIT = (690, 750, 740, 815)
+DAILYBLITZ_RIGHTCARD1_SUIT = (1350, 750, 1395, 815)
+DAILYBLITZ_RIGHTCARD2_SUIT = (1440, 755, 1495, 805)
 
-DAILYBLITZ_LEFTCARD1_SUIT = ()
+DAILYBLITZ_RIGHTCARD1_VALUE = (1340, 635, 1390, 730)
+DAILYBLITZ_RIGHTCARD2_VALUE = (1460, 625, 1505, 720)
 
-DAILYBLITZ_BOARD_SUIT1 = ()
 
-def test__dailyblitz():
-    dirpath = './dailyblitz/'
+EXPECT = {
+    'rightcard1': ['2', 'J', 'J', '5', 'T', 'T', '6', '6', 'J', '8', '9', '4', 'K', 'K', 'A', '5', 'J', 'T', '4', '6', '4', '5', 'T', 'T', 'Q', 'T', '6', '2', '4', '6', 'A', '4', 'K', 'J', '9', '7', '3', '7', '3', 'T', 'K', '3', '9', 'A', '3', 'Q', '4', '8', '7', 'T', '9', '5', '5', '9', '3', '2', '4', '5', 'J', '5', 'J', 'Q', '3', '7', '3', '3', '9', '9', '2', '2', 'Q', '9', '2', '7', 'K', 'K', 'J', 'J', '7', '7', '2', '4', 'Q', '8', '2', '6', '6', '3', '7', '8', 'T', '6', '7', 'K', 'A', 'A', 'A', 'T', 'T', '7', '3', '9', '7', '9', '7', '7', 'K', '3', '4', '4', '2', 'A', '9'],
+    'rightcard2': ['6', 'T', 'J', '6', '3', '3', 'A', 'A', '9', 'T', 'A', '8', '5', 'J', 'A', 'T', '9', '4', 'T', 'T', '7', '8', '6', '5', 'T', '5', '3', 'Q', 'T', 'A', '2', '3', '5', 'Q', '2', '6', 'A', 'A', '2', '3', 'T', '8', '7', '7', 'K', '3', '6', 'Q', '3', '7', '6', '6', '8', '9', 'Q', 'Q', '5', '6', 'T', 'J', '3', '6', '4', 'K', 'Q', 'Q', '4', '4', 'A', 'A', '5', 'Q', '2', '5', '5', '5', '7', '7', 'A', 'A', '5', '8', '5', 'T', '5', '2', '2', 'A', 'Q', 'J', 'A', '2', '4', '3', '3', '3', '3', 'Q', 'T', '5', 'J', '8', '5', '2', '3', '5', '4', 'J', '5', '5', '5', '6', '5']
+}
 
-    for i, filename in enumerate(sorted(os.listdir(dirpath))):
-        filepath = os.path.join(dirpath, filename)
-        # image = Image.open(filepath)
 
-        s = read_dailyblitz(filepath)
-        print(s)
+def read_dailyblitz(image):
 
-        input()
-
-def read_dailyblitz(imagepath):
     TEMPLATES_DAILYBLITZ_BOARD_VALUE = {}
     for v in CARD_VALUES:
         filepath = f'./cv/dailyblitz/board/{v}.png'
@@ -896,39 +1019,99 @@ def read_dailyblitz(imagepath):
     TEMPLATES_DAILYBLITZ_LEFTCARD1_VALUE = {}
     for v in CARD_VALUES:
         filepath = f'./cv/dailyblitz/leftcard1/{v}.png'
-        if not os.path.isfile(filepath):
+        if not os.path.isfile(filepath): # 8.png
             continue
-        # print('register', v)
         tv = cv2.imread(filepath, 0)
         TEMPLATES_DAILYBLITZ_LEFTCARD1_VALUE[v] = tv
 
     TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE = {}
     for v in CARD_VALUES:
         filepath = f'./cv/dailyblitz/leftcard2/{v}.png'
+        if not os.path.isfile(filepath):
+            continue
         tv = cv2.imread(filepath, 0)
         TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE[v] = tv
 
-    image = Image.open(imagepath)
+    TEMPLATES_DAILYBLITZ_RIGHTCARD1_VALUE = {}
+    for v in CARD_VALUES:
+        filepath = f'./cv/dailyblitz/rightcard1/{v}.png'
+        if not os.path.isfile(filepath):
+            continue
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_RIGHTCARD1_VALUE[v] = tv
+
+    TEMPLATES_DAILYBLITZ_RIGHTCARD2_VALUE = {}
+    for v in CARD_VALUES:
+        filepath = f'./cv/dailyblitz/rightcard2/{v}.png'
+        if not os.path.isfile(filepath):
+            continue
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_RIGHTCARD2_VALUE[v] = tv
+
+    TEMPLATES_DAILYBLITZ_LEFTCARD1_SUIT = {}
+    for v in CARD_SUITS:
+        filepath = f'./cv/dailyblitz/leftcard1/{v}.png'
+        if not os.path.isfile(filepath):
+            continue
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_LEFTCARD1_SUIT[v] = tv
+
+    TEMPLATES_DAILYBLITZ_LEFTCARD2_SUIT = {}
+    for v in CARD_SUITS:
+        filepath = f'./cv/dailyblitz/leftcard2/{v}.png'
+        if not os.path.isfile(filepath):
+            continue
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_LEFTCARD2_SUIT[v] = tv
+
+    TEMPLATES_DAILYBLITZ_RIGHTCARD1_SUIT = {}
+    for v in CARD_SUITS:
+        filepath = f'./cv/dailyblitz/rightcard1/{v}.png'
+        if not os.path.isfile(filepath):
+            continue
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_RIGHTCARD1_SUIT[v] = tv
+
+    TEMPLATES_DAILYBLITZ_RIGHTCARD2_SUIT = {}
+    for v in CARD_SUITS:
+        filepath = f'./cv/dailyblitz/rightcard2/{v}.png'
+        if not os.path.isfile(filepath):
+            continue
+        tv = cv2.imread(filepath, 0)
+        TEMPLATES_DAILYBLITZ_RIGHTCARD2_SUIT[v] = tv
 
     l1_v = match_symbol(image, DAILYBLITZ_LEFTCARD1_VALUE, TEMPLATES_DAILYBLITZ_LEFTCARD1_VALUE)
     l2_v = match_symbol(image, DAILYBLITZ_LEFTCARD2_VALUE, TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE)
-    r1_v = match_symbol(image, DAILYBLITZ_RIGHTCARD1_VALUE, TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE)
-    r2_v = match_symbol(image.rotate(10), DAILYBLITZ_RIGHTCARD2_VALUE, TEMPLATES_DAILYBLITZ_LEFTCARD2_VALUE)
+    r1_v = match_symbol(image, DAILYBLITZ_RIGHTCARD1_VALUE, TEMPLATES_DAILYBLITZ_RIGHTCARD1_VALUE)
+    r2_v = match_symbol(image, DAILYBLITZ_RIGHTCARD2_VALUE, TEMPLATES_DAILYBLITZ_RIGHTCARD2_VALUE)
 
-    # b_v1 = match_symbol(image, DAILYBLITZ_BOARD_VALUE1, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
-    # b_v2 = match_symbol(image, DAILYBLITZ_BOARD_VALUE2, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
-    # b_v3 = match_symbol(image, DAILYBLITZ_BOARD_VALUE3, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
-    # b_v4 = match_symbol(image, DAILYBLITZ_BOARD_VALUE4, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
-    # b_v5 = match_symbol(image, DAILYBLITZ_BOARD_VALUE5, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+    l1_s = match_symbol(image, DAILYBLITZ_LEFTCARD1_SUIT, TEMPLATES_DAILYBLITZ_LEFTCARD1_SUIT)
+    l2_s = match_symbol(image, DAILYBLITZ_LEFTCARD2_SUIT, TEMPLATES_DAILYBLITZ_LEFTCARD2_SUIT)
+    r1_s = match_symbol(image, DAILYBLITZ_RIGHTCARD1_SUIT, TEMPLATES_DAILYBLITZ_RIGHTCARD1_SUIT)
+    r2_s = match_symbol(image, DAILYBLITZ_RIGHTCARD2_SUIT, TEMPLATES_DAILYBLITZ_RIGHTCARD2_SUIT)
 
-    # b_s1 = match_symbol(image, DAILYBLITZ_BOARD1_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
-    # b_s2 = match_symbol(image, DAILYBLITZ_BOARD2_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
-    # b_s3 = match_symbol(image, DAILYBLITZ_BOARD3_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
-    # b_s4 = match_symbol(image, DAILYBLITZ_BOARD4_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
-    # b_s5 = match_symbol(image, DAILYBLITZ_BOARD5_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
-    return l1_v+l2_v, r1_v+r2_v
+    b_v1 = match_symbol(image, DAILYBLITZ_BOARD_VALUE1, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+    b_v2 = match_symbol(image, DAILYBLITZ_BOARD_VALUE2, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+    b_v3 = match_symbol(image, DAILYBLITZ_BOARD_VALUE3, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+    b_v4 = match_symbol(image, DAILYBLITZ_BOARD_VALUE4, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
+    b_v5 = match_symbol(image, DAILYBLITZ_BOARD_VALUE5, TEMPLATES_DAILYBLITZ_BOARD_VALUE)
 
-# TESTS TESTS TESTS
+    b_s1 = match_symbol(image, DAILYBLITZ_BOARD1_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+    b_s2 = match_symbol(image, DAILYBLITZ_BOARD2_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+    b_s3 = match_symbol(image, DAILYBLITZ_BOARD3_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+    b_s4 = match_symbol(image, DAILYBLITZ_BOARD4_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+    b_s5 = match_symbol(image, DAILYBLITZ_BOARD5_SUIT, TEMPLATES_DAILYBLITZ_BOARD_SUIT)
+
+    board = b_v1+b_s1, b_v2+b_s2, b_v3+b_s3, b_v4+b_s4, b_v5+b_s5
+    left = l1_v+l1_s, l2_v+l2_s
+    right = r1_v+r1_s, r2_v+r2_s
+
+    return board, left, right
+
+
+###
+###
+### TESTS TESTS TESTS ###
 
 def test_perf():
     dirpath = 'screencaps-auto'

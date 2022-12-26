@@ -3,6 +3,7 @@
 import os
 from PIL import Image
 from time import sleep
+from sys import argv
 
 def convert(filepath):
     with open(filepath, 'rb') as f:
@@ -10,7 +11,10 @@ def convert(filepath):
     image.save(filepath.replace('raw', 'png'))
     os.unlink(filepath)
 
-d = './screencaps-auto'
+if len(argv) == 1:
+    d = './screencaps-auto'
+else:
+    d = argv[1]
 while True:
     for filename in sorted(os.listdir(d)):
         if not filename.endswith('.raw'):

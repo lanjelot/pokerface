@@ -2,9 +2,12 @@
 
 ## Linux (Fedora)
 ```
-dnf install -y tesseract-devel leptonica-devel \
+dnf install -y \
+  tesseract-devel \
+  leptonica-devel \
   python3-opencv \
   python3-devel \
+  android-tools
 
 pip install -r requirements.txt
 
