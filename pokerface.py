@@ -214,6 +214,7 @@ def pack_number(num):
 CACHE_NUMBER = {}
 def read_number(image, region):
     image = image.crop(region)
+    # image.save('/tmp/needle.png')
 
     h = hash_image(image)
     if h in CACHE_NUMBER:
@@ -334,16 +335,16 @@ def read_call(image):
             return n
 
 
-def read_mystack(image):
-    if image.getpixel((730, 940))[1:3] == (0, 0):
+def  read_mystack(image):
+    if image.getpixel((730, 940))[1:3] < (15, 15): # black pixel
         sx1, sy1, sx2, sy2 = 770, 912, 950, 945 # cash game
     else:
         sx1, sy1, sx2, sy2 = 780, 885, 960, 918 # tournament
+    # for x2 in range(3):
     for y1, y2 in [(0, 1), (0, 2), (0, 0), (0, 4), (0, 3), (1, 0), (2, 0), (2, 1), (1, 2), (2, 3), (1, 1), (-2, 2)]:
-        n = read_number(image, (sx1, sy1+y1, sx2, sy2+y2))
+        n = read_number(image, (sx1, sy1+y1, sx2, sy2+y2)) # sx2-x2
         if n is not None:
-            break
-    return n
+            return n
 
 
 REGION_BUTTON3 = (1735, 960, 2145, 1059)
@@ -662,29 +663,26 @@ def bet_or_check(win_odds, street):
         return read_choice('check')
 
     if street == 'flop':
-        if win_odds > 70:
-            do_bet(2)
+        if win_odds > 80:
+            do_bet('HALF')
         else:
             do_check()
 
     elif street == 'turn':
         if win_odds > 80:
             do_bet('HALF')
-        elif win_odds > 70:
-            do_bet(2)
         else:
             do_check()
 
-    elif street == 'river':
+    elif street == 'river':        
         if win_odds > 90:
             do_bet('POT')
         elif win_odds > 80:
             do_bet('HALF')
-        elif win_odds > 70:
-            do_bet(1)
         else:
             do_check()
-    else:
+    
+    elif street == 'preflop':
         do_check()
 
 
@@ -720,15 +718,15 @@ def call_or_fold(win_odds, street, num_villains, image):
     if street != 'preflop':
         threshold = max(pot_odds, 100/(num_villains+1)) # assume everyone after me will call
 
-    call_size = pack_number(call_size)
-    pot_size = pack_number(pot_size)
+    call_size_p = pack_number(call_size)
+    pot_size_p = pack_number(pot_size)
 
     if win_odds > threshold:
         should = 'call'
-        lprint(f'> {threshold:5.2f} {call_size}/{pot_size}, ')
+        lprint(f'> {threshold:5.2f} {call_size_p}/{pot_size_p}, ')
     else:
         should = 'fold'
-        lprint(f'< {threshold:5.2f} {call_size}/{pot_size}, ')
+        lprint(f'< {threshold:5.2f} {call_size_p}/{pot_size_p}, ')
 
     if what_mode() == 'manual':
         return read_choice(should)
@@ -736,7 +734,7 @@ def call_or_fold(win_odds, street, num_villains, image):
     if should == 'fold':
         do_fold()
     else:
-        if street in ('turn', 'river') and win_odds > 95: # raise all in
+        if win_odds == 100:
             do_bet('ALL')
         else:
             do_call()
@@ -762,7 +760,7 @@ def make_key(cards, board, num_villains, image):
         cash = sum(filter(None, read_bets(image).values()))
         cash += read_bet(image, XY_MY_BET) or 0
         if can_call(image):
-            cash += read_call(image) #or 0 # TODO mystack?
+            cash += read_call(image) or read_mystack(image)
         key += f',{cash}'
 
     return key
@@ -816,7 +814,9 @@ def loop():
             continue
         prev_board = board
 
-        num_villains = len(read_villains(image))
+        if num_villains == 0:
+            num_villains = len(read_villains(image))
+        
         if num_villains == 0:
             continue
 
@@ -857,30 +857,46 @@ XY_DB_RIGHT = (1450, 750)
 def reload_db():
     pass
 
-def save_v(subdir, value, image):
-    filepath = os.path.join('cv/dailyblitz/', subdir, f'{value}.png')
+def save_v(subdir, image, prompt=None):
+    while True:
+        value = input(f'{prompt or subdir}: ').strip().upper()
+        if value in CARD_VALUES:
+            break
 
-    with open(filepath, 'wb') as f:
-        f.write(image.tobytes())
+    filepath = os.path.join('cv/dailyblitz/', subdir, f'{value}.png')
+    image.save(filepath)
+    # with open(filepath, 'wb') as f:
+    #     f.write(image.tobytes())
 
 
 def fix_invalid(left, right, image):
     if '?' in left[0]:
-        l1 = input('left 1:').strip().upper()
-        save_v('leftcard1', l1, image.crop(DAILYBLITZ_LEFTCARD1_VALUE))
+        save_v('leftcard1', image.crop(DAILYBLITZ_LEFTCARD1_VALUE))
 
     if '?' in left[1]:
-        l2 = input('left 2:').strip().upper()
-        save_v('leftcard2', l2, image.crop(DAILYBLITZ_LEFTCARD2_VALUE))
+        save_v('leftcard2', image.crop(DAILYBLITZ_LEFTCARD2_VALUE))
 
     if '?' in right[0]:
-        r1 = input('right 1:').strip().upper()
-        save_v('rightcard1', r1, image.crop(DAILYBLITZ_RIGHTCARD1_VALUE))
+        save_v('rightcard1', image.crop(DAILYBLITZ_RIGHTCARD1_VALUE))
 
     if '?' in right[1]:
-        r2 = input('right 2:').strip().upper()
-        save_v('rightcard2', r2, image.crop(DAILYBLITZ_RIGHTCARD2_VALUE))
+        save_v('rightcard2', image.crop(DAILYBLITZ_RIGHTCARD2_VALUE))
 
+def fix_board(board, image):
+    for i, card in enumerate(board):
+        if i == 0:
+            r = DAILYBLITZ_BOARD_VALUE1
+        elif i == 1:
+            r = DAILYBLITZ_BOARD_VALUE2
+        elif i == 2:
+            r = DAILYBLITZ_BOARD_VALUE3
+        elif i == 3:
+            r = DAILYBLITZ_BOARD_VALUE4
+        elif i == 4:
+            r = DAILYBLITZ_BOARD_VALUE5
+
+        if '?' in card:
+            save_v(f'board', image.crop(r), f'b{i+1}')
 
 
 def play_dailyblitz():
@@ -897,26 +913,35 @@ def play_dailyblitz():
             continue
 
         board, left, right = read_dailyblitz(image)
+        
+        if board == prev:
+            print('board == prev')
+            continue
+        prev = board
 
         if not all(c in VALID_CARDS for c in board):
-            continue
-
-        if not all(c in VALID_CARDS for c in left+right):
+            print('board invalid', board)
             save_image(image, 'screencaps-db-fail')
-            fix_invalid(left, right, image)
             continue
 
-        if board == prev:
+        if not all(c in VALID_CARDS for c in left):
+            print('left invalid', left, right)
+            save_image(image, 'screencaps-db-fail')
             continue
 
-        prev = board
+        if not all(c in VALID_CARDS for c in right):
+            print('right invalid', right)
+            save_image(image, 'screencaps-db-fail')
+            continue
+
         save_image(image, 'screencaps-db')
 
         left_wins = print_dailyblitz(board, left, right)
-        if left_wins:
-            tap(XY_DB_LEFT)
-        else:
-            tap(XY_DB_RIGHT)
+        print('left wins?', left_wins)
+        # if left_wins:
+        #     tap(XY_DB_LEFT)
+        # else:
+        #     tap(XY_DB_RIGHT)
 
 
 def print_dailyblitz(board, left, right):
@@ -958,7 +983,7 @@ def print_dailyblitz(board, left, right):
 
 
 def test__dailyblitz():
-    dirpath = './dailyblitz/'
+    dirpath = './screencaps-db-fail'
 
     for i, filename in enumerate(sorted(os.listdir(dirpath))):
         filepath = os.path.join(dirpath, filename)
@@ -967,8 +992,18 @@ def test__dailyblitz():
 
         board, left, right = read_dailyblitz(image)
 
-        if not all(c in VALID_CARDS for c in board+left+right):
-            input()
+        
+
+        if not all(c in VALID_CARDS for c in board):
+            print('board', board)
+            fix_board(board, image)
+            continue
+
+        if not all(c in VALID_CARDS for c in left+right):
+            print('left', left)
+            print('right', right)
+            fix_invalid(left, right, image)
+            continue
 
         print_dailyblitz(board, left, right)
 
@@ -1007,6 +1042,8 @@ def read_dailyblitz(image):
     TEMPLATES_DAILYBLITZ_BOARD_VALUE = {}
     for v in CARD_VALUES:
         filepath = f'./cv/dailyblitz/board/{v}.png'
+        if not os.path.isfile(filepath): # 8.png
+            continue
         tv = cv2.imread(filepath, 0)
         TEMPLATES_DAILYBLITZ_BOARD_VALUE[v] = tv
 
